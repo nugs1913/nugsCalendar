@@ -1,0 +1,32 @@
+# Python 가상환경
+venv/
+env/
+.env/
+.venv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Python 개발 환경
+.Python
+.python-version
+*.so
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# IDE 설정 파일
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# 로그 파일
+*.log
