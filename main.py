@@ -415,7 +415,8 @@ class Widget(QWidget):
             # 설정 파일 없을 때 기본 위치로 설정
             self.setGeometry(100, 100, 500, 500)
 
-class Noti:
+class Tray:
+
     def __init__(self):
         self.toaster = ToastNotifier()
 
@@ -424,7 +425,13 @@ class Noti:
         self.set_notification()
 
     def send_notification(self, content):
-        self.toaster.show_toast("Nugs Calendar", content, duration=0, threaded=True)
+        self.toaster.show_toast(
+            title="Nugs Calendar", 
+            msg=content, 
+            icon_path='icon.ico', 
+            duration=0, 
+            threaded=True
+            )
 
     def check_and_notify(self):
         now = datetime.now()
@@ -455,11 +462,6 @@ class Noti:
         self.set_notification()
         self.send_notification('Reload Complete')
 
-class Tray:
-
-    def __init__(self):
-        pass
-
     def on_exit(self, icon):
         icon.stop()
         os._exit(0)
@@ -473,19 +475,18 @@ class Tray:
             datetime.combine(datetime.now(), datetime.max.time())
         )
         window.set_calendar()
-        noti.reload_noti()
+        self.reload_noti()
         
-
     def show_event_list(self):
         result = []
-        for time, content in noti.event_dict.items():
+        for time, content in self.event_dict.items():
             result.append(f"{time} - {content}")
         content = " / ".join(result)
 
-        noti.send_notification(content)
+        self.send_notification(content)
 
     def create_image(self):
-        image = Image.open('C:/Users/nugs2/문서/NugsCalendar/icon.png')
+        image = Image.open('icon.ico')
         return image
     
     def tray_run(self):
@@ -497,8 +498,8 @@ class Tray:
         )
 
         # 아이콘 설정
-        icon = Icon("NugsCalendarNotifier", self.create_image(), menu=menu)
-        icon.run()
+        self.icon = Icon("NugsCalendarNotifier", self.create_image(), menu=menu)
+        self.icon.run_detached()
 
 def run_schedule():
     while True:
@@ -509,20 +510,20 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     public = Public()
     window = Widget()
-    noti = Noti()
     tray = Tray()
 
-    tray_thread = threading.Thread(target=tray.tray_run, daemon=True)
-    tray_thread.start()
+    window.show()
 
-    schedule.every().minute.at(":00").do(noti.check_and_notify)
+    schedule.every().minute.at(":00").do(tray.check_and_notify)
     schedule.every(10).minutes.do(window.set_calendar)
     schedule.every().day.at("00:00").do(window.set_calendar)
 
-    schedule_thread = threading.Thread(target=run_schedule, daemon=True)
+    # 스케줄러 스레드 시작
+    schedule_thread = threading.Thread(target=run_schedule)
+    schedule_thread.daemon = True
     schedule_thread.start()
 
-    window.show()
+    tray.tray_run()
 
     app.aboutToQuit.connect(window.on_closing)
     sys.exit(app.exec_())
