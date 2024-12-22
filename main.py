@@ -1,8 +1,12 @@
 import sys, os, json, calendar, requests, xmltodict, schedule, time, threading
 from datetime import datetime, timedelta, date
-from PyQt5.QtWidgets import QApplication, QWidget, QLabel
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont
+from PySide6.QtWidgets import QApplication, QWidget, QLabel
+from PySide6.QtCore import Qt, QTimer, Signal, Property, QPropertyAnimation
+from PySide6.QtGui import QFont, QPainter, QPainterPath, QColor
+from functools import partial
+
+from enum import Enum
+from dataclasses import dataclass
 
 from win10toast import ToastNotifier
 from pystray import Icon, Menu, MenuItem
@@ -27,6 +31,32 @@ class Public:
             self.service = None
 
         self.noti_events = self.get_events()
+
+        self.toggle = False
+        self.x = 100
+        self.y = 100
+        self.width = 940
+        self.height = 940
+        self.theme = 'light'
+
+        self.load_config()
+
+    def load_config(self):
+        # 설정 파일이 존재하는 경우 위치 불러오기
+        if os.path.exists('config.json'):
+            try:
+                with open('config.json', 'r') as f:
+                    config = json.load(f)
+                    self.x = config.get('x', 100)
+                    self.y = config.get('y', 100)
+                    self.width = config.get('width', 500)
+                    self.height = config.get('height', 500)
+                    self.theme = config.get('theme', 'dark')
+
+            except json.JSONDecodeError:
+                pass
+        else:
+            pass
 
     def get_google_credentials(self):
         # OAuth 2.0 스코프 설정 (캘린더 읽기 권한)
@@ -75,19 +105,20 @@ class Public:
                 timeMax=end_date.isoformat() + 'Z',
                 singleEvents=True,
                 orderBy='startTime',
-                fields='items(summary,start/dateTime,end/dateTime)'
+                fields='items(summary,start/dateTime,end/dateTime, start/date, end/date)'
             ).execute()
             events = events_result.get('items', [])
         
             event_dict = {}
             for event in events:
-                start = event.get('start', {}).get('dateTime')
-                end = event.get('end', {}).get('dateTime')
+                start = event.get('start', {}).get('dateTime') if event.get('start', {}).get('dateTime') else event.get('start', {}).get('date')
+                end = event.get('end', {}).get('dateTime') if event.get('end', {}).get('dateTime') else event.get('end', {}).get('date')
 
                 if start and end:
                     event_date = datetime.fromisoformat(start).date().isoformat()
                     if event_date not in event_dict:
                         event_dict[event_date] = []
+
                     event_dict[event_date].append({
                         "summary": event.get('summary'), 
                         "start": datetime.fromisoformat(start).time().isoformat(), 
@@ -105,15 +136,177 @@ class Public:
             datetime.combine(datetime.now(), datetime.max.time())
         )
 
+class Theme(Enum):
+    DARK = "dark"
+    LIGHT = "light"
+    CUSTOM = "custom"
+
+@dataclass
+class ColorScheme:
+    white: str
+    black: str
+    gray: str
+    background: str
+    highlight: str
+    text: str
+
+class ThemeManager:
+    def __init__(self):
+        self.current_theme = Theme.DARK
+        self.color_schemes = {
+            Theme.DARK: ColorScheme(
+                white='#F5EFE7',
+                black='#021526',
+                gray='#F5EFE7',
+                background='#1E1E1E',
+                highlight='#03346E',
+                text='#FFFFFF'
+            ),
+            Theme.LIGHT: ColorScheme(
+                white='#021526',
+                black='#F5EFE7',
+                gray='#021526',
+                highlight='#03346E',
+                background='#FFFFFF',
+                text='#000000'
+            ),
+            Theme.CUSTOM: ColorScheme(
+                white='#E0E0E0',
+                black='#121212',
+                gray='#A0A0A0',
+                highlight='#D8C4B6',
+                background='#2D2D2D',
+                text='#E0E0E0'
+            )
+        }
+    
+    def set_theme(self, theme: Theme):
+        self.current_theme = theme
+    
+    def get_colors(self):
+        return vars(self.color_schemes[self.current_theme])
+    
+    def get_stylesheet(self):
+        colors = self.get_colors()
+        return """
+                /* 기본 스타일 */
+                .blank {{
+                    background-color: rgba(0, 0, 0, 0);
+                }}
+
+                .title {{
+                    background-color: rgba(0, 0, 0, 0);
+                    color: {white};
+                }}
+                            
+                .day {{
+                    background-color: {black};
+                }}
+
+                .dayTitleFrame {{
+                    background-color: {black};
+                    border-bottom: 1px solid {gray};
+                }}
+
+                .innerFrame {{
+                    background-color: {black};
+                    color: {white};
+                    width: 120px;
+                    height: 90px;
+                }}
+                
+                .innerFrame:hover {{
+                    border: 1px solid {highlight};
+                    background-color: {highlight};
+                    border-top: 0px;
+                }}
+
+                .detailFrame {{
+                    background-color: {black};
+                    color: {white};
+                    width: 500px;
+                    height: 500px;
+                    border-radius: 15px;
+                    border: 1px solid {gray};
+                }}
+
+                /* 버튼 스타일 */
+                .titleBtn {{
+                    background-color: rgba(0, 0, 0, 0);
+                    color: {white};
+                }}
+
+                /* 요일 타이틀 스타일 */
+                .dayTitle {{
+                    background-color: {black};
+                    color: {white};
+                    border: 0px;
+                    padding-bottom: 2px;
+                }}
+
+                .sundayTitle {{
+                    background-color: {black};
+                    color: red;
+                    border: 0px;
+                    padding-bottom: 2px;
+                }}
+
+                .saturdayTitle {{
+                    background-color: {black};
+                    color: blue;
+                    border: 0px;
+                    padding-bottom: 2px;
+                }}
+
+                /* 오늘 날짜 타이틀 스타일 */
+                .todayTitle {{
+                    background-color: {white};
+                    color: {black};
+                    border-radius: 5px;
+                    border: 1px solid {white};
+                    padding-bottom: 2px;
+                }}
+
+                .tSundayTitle {{
+                    background-color: red;
+                    color: white;
+                    border-radius: 5px;
+                    border: 1px solid red;
+                    padding-bottom: 2px;
+                }}
+
+                .tSaturdayTitle {{
+                    background-color: blue;
+                    color: white;
+                    border-radius: 5px;
+                    border: 1px solid blue;
+                    padding-bottom: 2px;
+                }}
+
+                .innerLabel {{
+                    color: {white};
+                }}
+
+                .holidayLabel {{
+                    color: red;
+                }}
+            """.format(**colors)
+
+    def add_custom_theme(self, color_scheme: ColorScheme):
+        self.color_schemes[Theme.CUSTOM] = color_scheme
+
 class Widget(QWidget):
     def __init__(self):
         super().__init__()
+        self.theme_manager = ThemeManager()
 
         self.config_file = 'config.json'
         self.click_count = 0
         self.moving = False
         self.x = None
         self.y = None
+
+        self.detailFrame = None
 
         now = datetime.now()
         self.year = now.year
@@ -123,31 +316,30 @@ class Widget(QWidget):
         today = date.today()
         self.today = today.isoformat()
 
-        self.nomal = QFont('나눔스퀘어 네오', 12, QFont.Bold)
+        self.nomal = QFont('나눔스퀘어 네오', 11, QFont.Bold)
         self.small = QFont('나눔스퀘어 네오', 9)
         self.big = QFont('나눔스퀘어 네오', 20, QFont.Bold)
 
-        self.setting = {
-            "blank": "background-color: rgba(0, 0, 0, 0);",
-            "day": "background-color: white; color: black; width: 120px; height: 120px;",
-            "title": "background-color: rgba(0, 0, 0, 0); color: white;",
-            "titleBtn": "background-color: white; color: black; border-radius: 15px; border: 1px solid black;",
-            "dayTitle": "background-color: white; color: black; border: 1px solid black;",
-            "todayTitle": "background-color: black; color: white; border: 1px solid black;",
-            "tSundayTitle": "background-color: red; color: white; border: 1px solid black;",
-            "tSaturdayTitle": "background-color: blue; color: white; border: 1px solid black;",
-            "sundayTitle": "background-color: white; color: red; border: 1px solid black;",
-            "saturdayTitle": "background-color: white; color: blue; border: 1px solid black;",
-            "innerFrame": "background-color: white; color: black; width: 120px; height: 80px;"
-        }
-
+        self.set_theme(Theme(public.theme))
         self.initUI()
-        self.load_window_position()
+
+    def set_theme(self, theme: Theme):
+        self.theme_manager.set_theme(theme)
+        self.update_stylesheet()
+    
+    def update_stylesheet(self):
+        self.setStyleSheet(self.theme_manager.get_stylesheet())
+    
+    def toggle_theme(self):
+        # 테마 전환
+        current = self.theme_manager.current_theme
+        new_theme = Theme.LIGHT if current == Theme.DARK else Theme.DARK
+        self.set_theme(new_theme)
 
     def initUI(self):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setGeometry(0, 0, 940, 1140)
+        self.setGeometry(public.x, public.y, public.width, public.height)
 
         self.showFrame()
 
@@ -158,28 +350,27 @@ class Widget(QWidget):
 
         frame = QWidget(self)
         frame.setGeometry(0, 200, 940, 1140)
-        frame.setStyleSheet(self.setting['blank'])
-
+        frame.setProperty('class', 'blank')
         title = QWidget(frame)
         title.setGeometry(0, 0, 940, 100)
-        title.setStyleSheet(self.setting['blank'])
+        title.setProperty('class', 'blank')
 
         self.titleLabel = QLabel(f'{self.year} - {str(self.month).zfill(2)}', title)
         self.titleLabel.setGeometry(100, 0, 640, 100)
-        self.titleLabel.setStyleSheet(self.setting['title'])
+        self.titleLabel.setProperty('class', 'title')
         self.titleLabel.setAlignment(Qt.AlignCenter)
         self.titleLabel.setFont(self.big)
 
         prevMonth = QLabel('◀', title)
         prevMonth.setGeometry(125, 35, 30, 30)
-        prevMonth.setStyleSheet(self.setting['titleBtn'] + 'padding-right: 3px;')
+        prevMonth.setProperty('class', 'titleBtn')
         prevMonth.setAlignment(Qt.AlignCenter)
         prevMonth.setFont(self.nomal)
         prevMonth.mousePressEvent = self.prev_month
 
         nextMonth = QLabel('▶', title)
         nextMonth.setGeometry(665, 35, 30, 30)
-        nextMonth.setStyleSheet(self.setting['titleBtn'] + 'padding-left: 2px;')
+        nextMonth.setProperty('class', 'titleBtn')
         nextMonth.setAlignment(Qt.AlignCenter)
         nextMonth.setFont(self.nomal)
         nextMonth.mousePressEvent = self.next_month
@@ -188,29 +379,49 @@ class Widget(QWidget):
         for item in range(0, 42):
             dayFrame = QWidget(frame)
             dayFrame.setGeometry((item % 7) * 120, (item // 7) * 120 + 100, 120, 120)
-            dayFrame.setStyleSheet(self.setting['day'])
+            dayFrame.setProperty('class', 'day')
 
-            label = QLabel(f'{item}', dayFrame)
-            label.setGeometry(0, 0, 120, 30)
+            titleFrame = QWidget(dayFrame)
+            titleFrame.setGeometry(0, 0, 120, 30)
+            titleFrame.setProperty('class', 'dayTitleFrame')
+
+            label = QLabel(f'{item}', titleFrame)
+            label.setGeometry(45, 5, 30, 20)
+            label.setProperty('class', 'dayTitle')
             label.setAlignment(Qt.AlignCenter)
             label.setFont(self.nomal)
 
             innerFrame = QWidget(dayFrame)
-            innerFrame.setGeometry(0, 30, 120, 80)
-            innerFrame.setStyleSheet(self.setting['innerFrame'])
+            innerFrame.setGeometry(0, 30, 120, 90)
+            innerFrame.setProperty('class', 'innerFrame')
+
+            holidayLabel = QLabel('', innerFrame)
+            holidayLabel.setGeometry(0, 0, 120, 20)
+            holidayLabel.setProperty('class', 'holidayLabel')
+            holidayLabel.setAlignment(Qt.AlignCenter)
+            holidayLabel.setFont(self.small)
 
             innerLabel = QLabel('', innerFrame)
-            innerLabel.setGeometry(0, 0, 120, 80)
+            innerLabel.setGeometry(0, 20, 120, 70)
+            innerLabel.setProperty('class', 'innerLabel')
             innerLabel.setFont(self.small)
             innerLabel.setWordWrap(True)
             innerLabel.setAlignment(Qt.AlignCenter)
+            innerFrame.mousePressEvent = partial(self.show_detail, label=label)
 
             self.dayFrames[f'dayFrame{item}'] = dayFrame
             setattr(dayFrame, 'label', label)
             setattr(dayFrame, 'innerFrame', innerFrame)
             setattr(dayFrame, 'innerLabel', innerLabel)
+            setattr(dayFrame, 'holidayLabel', holidayLabel)
 
         self.set_calendar()
+
+    def on_toggle(self, enabled):
+        if enabled:
+            self.toggle_theme()
+        else:
+            self.set_theme(Theme.DARK)
 
     def display_none(widget, hide=True):
         # 현재 StyleSheet 가져오기
@@ -284,23 +495,33 @@ class Widget(QWidget):
 
                 current_date = date(self.year, self.month, idx - weekday + 1).isoformat()
                 day.label.setText(str(idx - weekday + 1))
+                day.holidayLabel.setText('')
 
                 if idx % 7 == 0:
                     if self.today == current_date:
-                        day.label.setStyleSheet(self.setting['tSundayTitle'])
+                        day.label.setProperty('class', 'tSundayTitle')
                     else:
-                        day.label.setStyleSheet(self.setting['sundayTitle'])
+                        day.label.setProperty('class', 'sundayTitle')
                 elif idx % 7 == 6:
                     if self.today == current_date:
-                        day.label.setStyleSheet(self.setting['tSaturdayTitle'])
+                        day.label.setProperty('class', 'tSaturdayTitle')
                     else:
-                        day.label.setStyleSheet(self.setting['saturdayTitle'])
+                        day.label.setProperty('class', 'saturdayTitle')
                 else:
                     if self.today == current_date:
-                        day.label.setStyleSheet(self.setting['todayTitle'])
+                        day.label.setProperty('class', 'todayTitle')
                     else:
-                        day.label.setStyleSheet(self.setting['dayTitle'])
-                
+                        day.label.setProperty('class', 'dayTitle')
+
+                # 해당 날짜가 휴일인 경우 sundayTitle 스타일 적용
+                if current_date.replace('-', '') in holiday_dict:
+                    if self.today == current_date:
+                        day.label.setProperty('class', 'tSundayTitle')
+                    else:
+                        day.label.setProperty('class', 'sundayTitle')
+
+                    day.holidayLabel.setText(holiday_dict[current_date.replace('-', '')])
+
                 # 해당 날짜의 이벤트 가져오기
                 events = self.event_dict.get(current_date, [])
                 event_text = ''
@@ -310,13 +531,60 @@ class Widget(QWidget):
 
                 day.innerLabel.setText(event_text)
 
-                # 해당 날짜가 휴일인 경우 sundayTitle 스타일 적용
-                if current_date.replace('-', '') in holiday_dict:
-                    if self.today == current_date:
-                        day.label.setStyleSheet(self.setting['tSundayTitle'])
-                    else:
-                        day.label.setStyleSheet(self.setting['sundayTitle'])
-                    day.innerLabel.setText(holiday_dict[current_date.replace('-', '')])
+                # 스타일 다시 적용
+                day.label.style().unpolish(day.label)
+                day.label.style().polish(day.label)
+                day.label.update()
+
+    def show_detail(self, e, label):
+
+        if hasattr(self, 'detailFrame') and self.detailFrame is not None:
+            self.detailFrame.deleteLater()
+            self.detailFrame = None
+
+        # 라벨의 실제 위치 계산
+        global_pos = label.mapToGlobal(label.rect().topLeft())
+        parent_pos = self.mapFromGlobal(global_pos)
+        x = parent_pos.x() if parent_pos.x() + 375 < 840 else parent_pos.x() - 420
+        y = parent_pos.y()
+
+        self.detailFrame = QWidget(self)
+        self.detailFrame.setGeometry(x + 75, min(y, 400), 300, 500)
+        self.detailFrame.setProperty('class', 'detailFrame')
+
+        exitBtn = QLabel('X', self.detailFrame)
+        exitBtn.setGeometry(274, 3, 25, 25)
+        exitBtn.setProperty('class', 'titleBtn')
+        exitBtn.setAlignment(Qt.AlignCenter)
+        exitBtn.setFont(self.nomal)
+        exitBtn.mousePressEvent = partial(self.detail_close, widget=self.detailFrame)
+
+        current_date = date(self.year, self.month, int(label.text())).isoformat()
+        events = self.event_dict.get(current_date, [])
+
+        event_texts = [f"{event['summary']} ({event['start']} ~ {event['end']})" for event in events]
+        
+        dateLabel = QLabel(f'{current_date}', self.detailFrame)
+        dateLabel.setGeometry(10, 20, 280, 30)
+        dateLabel.setProperty('class', 'innerLabel')
+        dateLabel.setFont(self.nomal)
+        dateLabel.setAlignment(Qt.AlignCenter)
+
+        for idx, text in enumerate(event_texts):
+            label = QLabel(text, self.detailFrame)
+            label.setGeometry(10, 30 * idx + 60, 280, 30)
+            label.setProperty('class', 'innerLabel')
+            label.setFont(self.small)
+            label.setWordWrap(True)
+            label.setText(text)
+
+        # 프레임을 최상단으로 올리기
+        self.detailFrame.raise_()
+        self.detailFrame.show()
+
+    def detail_close(self, e, widget):
+        widget.deleteLater()
+        self.detailFrame = None
 
     def prev_month(self, e):
         self.month -= 1
@@ -324,6 +592,7 @@ class Widget(QWidget):
             self.month = 12
             self.year -= 1
 
+        self.titleLabel.setText(f'{self.year} - {str(self.month).zfill(2)}')
         self.set_calendar()
     
     def next_month(self, e):
@@ -332,6 +601,7 @@ class Widget(QWidget):
             self.month = 1
             self.year += 1
 
+        self.titleLabel.setText(f'{self.year} - {str(self.month).zfill(2)}')
         self.set_calendar()
 
     def handle_click(self, event):
@@ -369,7 +639,8 @@ class Widget(QWidget):
                 'x': x,
                 'y': y,
                 'width': self.width(),
-                'height': self.height()
+                'height': self.height(),
+                'theme': self.theme_manager.current_theme.value
             }
             with open(self.config_file, 'w') as f:
                 json.dump(config, f)
@@ -386,7 +657,8 @@ class Widget(QWidget):
             'x': x,
             'y': y,
             'width': width,
-            'height': height
+            'height': height,
+            'theme': self.theme_manager.current_theme.value
         }
         
         with open(self.config_file, 'w') as f:
@@ -394,26 +666,6 @@ class Widget(QWidget):
         
         # 프로그램 종료
         self.close()
-
-    def load_window_position(self):
-        # 설정 파일이 존재하는 경우 위치 불러오기
-        if os.path.exists(self.config_file):
-            try:
-                with open(self.config_file, 'r') as f:
-                    config = json.load(f)
-                    x = config.get('x', 100)
-                    y = config.get('y', 100)
-                    width = config.get('width', 500)
-                    height = config.get('height', 500)
-                    
-                    # 창 크기와 위치 설정
-                    self.setGeometry(x, y, width, height)
-            except json.JSONDecodeError:
-                # 파일 읽기 실패 시 기본 위치로 설정
-                self.setGeometry(100, 100, 500, 500)
-        else:
-            # 설정 파일 없을 때 기본 위치로 설정
-            self.setGeometry(100, 100, 500, 500)
 
 class Tray:
 
@@ -526,4 +778,4 @@ if __name__ == '__main__':
     tray.tray_run()
 
     app.aboutToQuit.connect(window.on_closing)
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
