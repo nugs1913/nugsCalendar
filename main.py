@@ -1,8 +1,8 @@
 import sys, os, json, calendar, requests, xmltodict, schedule, time, threading
 from datetime import datetime, timedelta, date
-from PySide6.QtWidgets import QApplication, QWidget, QLabel
-from PySide6.QtCore import Qt, QTimer, Signal, Property, QPropertyAnimation
-from PySide6.QtGui import QFont, QPainter, QPainterPath, QColor
+from PySide6.QtWidgets import QApplication, QWidget, QLabel, QLineEdit, QDateTimeEdit, QPushButton
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont
 from functools import partial
 
 from enum import Enum
@@ -60,7 +60,7 @@ class Public:
 
     def get_google_credentials(self):
         # OAuth 2.0 스코프 설정 (캘린더 읽기 권한)
-        SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+        SCOPES = ['https://www.googleapis.com/auth/calendar']
         
         creds = None
         # token.json 파일 확인 (이전 인증 토큰)
@@ -105,7 +105,7 @@ class Public:
                 timeMax=end_date.isoformat() + 'Z',
                 singleEvents=True,
                 orderBy='startTime',
-                fields='items(summary,start/dateTime,end/dateTime, start/date, end/date)'
+                fields='items(id,summary,start/dateTime,end/dateTime, start/date, end/date)'
             ).execute()
             events = events_result.get('items', [])
         
@@ -120,6 +120,7 @@ class Public:
                         event_dict[event_date] = []
 
                     event_dict[event_date].append({
+                        "id": event.get('id'),
                         "summary": event.get('summary'), 
                         "start": datetime.fromisoformat(start).time().isoformat(), 
                         "end": datetime.fromisoformat(end).time().isoformat()
@@ -232,6 +233,11 @@ class ThemeManager:
 
                 /* 버튼 스타일 */
                 .titleBtn {{
+                    background-color: rgba(0, 0, 0, 0);
+                    color: {white};
+                }}
+
+                .exitBtn {{
                     background-color: rgba(0, 0, 0, 0);
                     color: {white};
                 }}
@@ -554,10 +560,11 @@ class Widget(QWidget):
 
         exitBtn = QLabel('X', self.detailFrame)
         exitBtn.setGeometry(274, 3, 25, 25)
-        exitBtn.setProperty('class', 'titleBtn')
+        exitBtn.setProperty('class', 'exitBtn')
         exitBtn.setAlignment(Qt.AlignCenter)
         exitBtn.setFont(self.nomal)
         exitBtn.mousePressEvent = partial(self.detail_close, widget=self.detailFrame)
+        exitBtn.setCursor(Qt.PointingHandCursor)
 
         current_date = date(self.year, self.month, int(label.text())).isoformat()
         events = self.event_dict.get(current_date, [])
@@ -570,13 +577,58 @@ class Widget(QWidget):
         dateLabel.setFont(self.nomal)
         dateLabel.setAlignment(Qt.AlignCenter)
 
+        offset = 80
         for idx, text in enumerate(event_texts):
+            deleteBtn = QPushButton('삭제', self.detailFrame)
+            deleteBtn.setGeometry(240, 30 * idx + 60, 30, 30)
+            deleteBtn.setFont(self.small)
+            deleteBtn.clicked.connect(partial(self.delete_event, events[idx]['id']))
+            deleteBtn.setCursor(Qt.PointingHandCursor)
+
             label = QLabel(text, self.detailFrame)
-            label.setGeometry(10, 30 * idx + 60, 280, 30)
+            label.setGeometry(10, 30 * idx + 60, 230, 30)
             label.setProperty('class', 'innerLabel')
             label.setFont(self.small)
             label.setWordWrap(True)
             label.setText(text)
+            offset += 30
+
+        inputContentLabel = QLabel('일정 추가', self.detailFrame)
+        inputContentLabel.setGeometry(10, offset, 60, 30)
+        inputContentLabel.setProperty('class', 'innerLabel')
+        inputContentLabel.setFont(self.small)
+
+        inputContent = QLineEdit(self.detailFrame)
+        inputContent.setGeometry(70, offset, 220, 30)
+        inputContent.setFont(self.small)
+        inputContent.setPlaceholderText('일정을 입력하세요')
+
+        inputStartLabel = QLabel('시작 시간', self.detailFrame)
+        inputStartLabel.setGeometry(10, offset + 30, 60, 30)
+        inputStartLabel.setProperty('class', 'innerLabel')
+        inputStartLabel.setFont(self.small)
+
+        inputStart = QDateTimeEdit(self.detailFrame)
+        inputStart.setGeometry(70, offset + 30, 220, 30)
+        inputStart.setFont(self.small)
+        inputStart.setDisplayFormat('yyyy-MM-dd / HH:mm')
+        inputStart.setDateTime(datetime.strptime(current_date, '%Y-%m-%d'))
+
+        inputEndLabel = QLabel('종료 시간', self.detailFrame)
+        inputEndLabel.setGeometry(10, offset + 60, 60, 30)
+        inputEndLabel.setProperty('class', 'innerLabel')
+        inputEndLabel.setFont(self.small)
+
+        inputEnd = QDateTimeEdit(self.detailFrame)
+        inputEnd.setGeometry(70, offset + 60, 220, 30)
+        inputEnd.setFont(self.small)
+        inputEnd.setDisplayFormat('yyyy-MM-dd / HH:mm')
+        inputEnd.setDateTime(datetime.strptime(current_date, '%Y-%m-%d') + timedelta(minutes=10))
+
+        addBtn = QPushButton('추가', self.detailFrame)
+        addBtn.setGeometry(10, offset + 90, 280, 30)
+        addBtn.setFont(self.small)
+        addBtn.clicked.connect(lambda: self.add_event(inputContent.text(), inputStart.dateTime(), inputEnd.dateTime()))
 
         # 프레임을 최상단으로 올리기
         self.detailFrame.raise_()
@@ -585,6 +637,39 @@ class Widget(QWidget):
     def detail_close(self, e, widget):
         widget.deleteLater()
         self.detailFrame = None
+
+    def add_event(self, summary, start, end):
+        if not public.service:
+            return
+
+        event = {
+            'summary': summary,
+            'start': {
+                'dateTime': start.toString(Qt.ISODate),
+                'timeZone': 'Asia/Seoul'
+            },
+            'end': {
+                'dateTime': end.toString(Qt.ISODate),
+                'timeZone': 'Asia/Seoul'
+            }
+        }
+
+        try:
+            public.service.events().insert(calendarId='primary', body=event).execute()
+            self.set_calendar()
+        except Exception as e:
+            print(f"Error adding event: {e}")
+
+    def delete_event(self, event_id):
+
+        if not public.service:
+            return
+
+        try:
+            public.service.events().delete(calendarId='primary', eventId=event_id).execute()
+            self.set_calendar()
+        except Exception as e:
+            print(f"Error deleting event: {e}")
 
     def prev_month(self, e):
         self.month -= 1
