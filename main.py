@@ -1,6 +1,6 @@
 import sys, os, json, calendar, requests, xmltodict, schedule, time, threading
 from datetime import datetime, timedelta, date
-from PySide6.QtWidgets import QApplication, QWidget, QLabel, QLineEdit, QDateTimeEdit, QPushButton
+from PySide6.QtWidgets import QApplication, QWidget, QLabel, QLineEdit, QDateTimeEdit, QPushButton, QGridLayout, QVBoxLayout, QHBoxLayout, QSizePolicy
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 from functools import partial
@@ -206,7 +206,6 @@ class ThemeManager:
 
                 .dayTitleFrame {{
                     background-color: {black};
-                    border-bottom: 1px solid {gray};
                 }}
 
                 .innerFrame {{
@@ -248,6 +247,7 @@ class ThemeManager:
                     color: {white};
                     border: 0px;
                     padding-bottom: 2px;
+                    border-bottom: 1px solid {gray};
                 }}
 
                 .sundayTitle {{
@@ -255,6 +255,7 @@ class ThemeManager:
                     color: red;
                     border: 0px;
                     padding-bottom: 2px;
+                    border-bottom: 1px solid {gray};
                 }}
 
                 .saturdayTitle {{
@@ -262,13 +263,13 @@ class ThemeManager:
                     color: blue;
                     border: 0px;
                     padding-bottom: 2px;
+                    border-bottom: 1px solid {gray};
                 }}
 
                 /* 오늘 날짜 타이틀 스타일 */
                 .todayTitle {{
                     background-color: {white};
                     color: {black};
-                    border-radius: 5px;
                     border: 1px solid {white};
                     padding-bottom: 2px;
                 }}
@@ -276,7 +277,6 @@ class ThemeManager:
                 .tSundayTitle {{
                     background-color: red;
                     color: white;
-                    border-radius: 5px;
                     border: 1px solid red;
                     padding-bottom: 2px;
                 }}
@@ -284,7 +284,6 @@ class ThemeManager:
                 .tSaturdayTitle {{
                     background-color: blue;
                     color: white;
-                    border-radius: 5px;
                     border: 1px solid blue;
                     padding-bottom: 2px;
                 }}
@@ -354,28 +353,45 @@ class Widget(QWidget):
         self.mouseReleaseEvent = self.stop_move
         self.mouseMoveEvent = self.do_move
 
+        grid = QGridLayout()
+        self.setLayout(grid)
+
+        # 모든 열의 너비를 동일하게 설정
+        cell_width = 120  # 원하는 셀 너비
+        for column in range(7):
+            grid.setColumnMinimumWidth(column, cell_width)
+            grid.setColumnStretch(column, 1)  # 모든 열에 동일한 stretch factor 적용
+
+        # 모든 행의 높이를 동일하게 설정
+        cell_height = 120  # 원하는 셀 높이
+        for row in range(1, 7):  # 1부터 시작하는 이유는 첫 번째 행이 요일 표시 줄일 경우
+            grid.setRowMinimumHeight(row, cell_height)
+            grid.setRowStretch(row, 1)  # 모든 행에 동일한 stretch factor 적용
+
         frame = QWidget(self)
-        frame.setGeometry(0, 200, 940, 1140)
+        grid.addWidget(frame, 0, 0, 7, 7)
+        frame.setGeometry(0, 0, 940, 1140)
         frame.setProperty('class', 'blank')
+
         title = QWidget(frame)
-        title.setGeometry(0, 0, 940, 100)
+        grid.addWidget(title, 0, 0, 1, 7)
         title.setProperty('class', 'blank')
 
         self.titleLabel = QLabel(f'{self.year} - {str(self.month).zfill(2)}', title)
-        self.titleLabel.setGeometry(100, 0, 640, 100)
+        grid.addWidget(self.titleLabel, 0, 1, 1, 5)
         self.titleLabel.setProperty('class', 'title')
         self.titleLabel.setAlignment(Qt.AlignCenter)
         self.titleLabel.setFont(self.big)
 
         prevMonth = QLabel('◀', title)
-        prevMonth.setGeometry(125, 35, 30, 30)
+        grid.addWidget(prevMonth, 0, 0, 1, 1)
         prevMonth.setProperty('class', 'titleBtn')
         prevMonth.setAlignment(Qt.AlignCenter)
         prevMonth.setFont(self.nomal)
         prevMonth.mousePressEvent = self.prev_month
 
         nextMonth = QLabel('▶', title)
-        nextMonth.setGeometry(665, 35, 30, 30)
+        grid.addWidget(nextMonth, 0, 6, 1, 1)
         nextMonth.setProperty('class', 'titleBtn')
         nextMonth.setAlignment(Qt.AlignCenter)
         nextMonth.setFont(self.nomal)
@@ -383,38 +399,67 @@ class Widget(QWidget):
 
         self.dayFrames = {}
         for item in range(0, 42):
+            # 메인 dayFrame 생성 및 메인 그리드에 추가
             dayFrame = QWidget(frame)
-            dayFrame.setGeometry((item % 7) * 120, (item // 7) * 120 + 100, 120, 120)
+            grid.addWidget(dayFrame, item // 7 + 1, item % 7)
             dayFrame.setProperty('class', 'day')
-
+            
+            # dayFrame의 내부 레이아웃 설정
+            dayLayout = QVBoxLayout(dayFrame)
+            dayLayout.setContentsMargins(0, 0, 0, 0)
+            dayLayout.setSpacing(0)
+            
+            # titleFrame 생성 및 설정
             titleFrame = QWidget(dayFrame)
-            titleFrame.setGeometry(0, 0, 120, 30)
             titleFrame.setProperty('class', 'dayTitleFrame')
-
+            titleFrame.setFixedHeight(30)  # 높이 고정
+            
+            # titleFrame 내부 레이아웃
+            titleLayout = QHBoxLayout(titleFrame)
+            titleLayout.setContentsMargins(0, 0, 0, 0)
+            
+            # 날짜 라벨
             label = QLabel(f'{item}', titleFrame)
-            label.setGeometry(45, 5, 30, 20)
             label.setProperty('class', 'dayTitle')
             label.setAlignment(Qt.AlignCenter)
             label.setFont(self.nomal)
-
+            titleLayout.addWidget(label)
+            
+            # innerFrame 생성 및 설정
             innerFrame = QWidget(dayFrame)
-            innerFrame.setGeometry(0, 30, 120, 90)
             innerFrame.setProperty('class', 'innerFrame')
-
+            
+            # innerFrame 내부 레이아웃
+            innerLayout = QVBoxLayout(innerFrame)
+            innerLayout.setContentsMargins(0, 0, 0, 0)
+            innerLayout.setSpacing(0)
+            
+            # 휴일 라벨
             holidayLabel = QLabel('', innerFrame)
-            holidayLabel.setGeometry(0, 0, 120, 20)
             holidayLabel.setProperty('class', 'holidayLabel')
             holidayLabel.setAlignment(Qt.AlignCenter)
             holidayLabel.setFont(self.small)
-
+            holidayLabel.setFixedHeight(20)  # 높이 고정
+            
+            # 내부 라벨
             innerLabel = QLabel('', innerFrame)
-            innerLabel.setGeometry(0, 20, 120, 70)
             innerLabel.setProperty('class', 'innerLabel')
             innerLabel.setFont(self.small)
             innerLabel.setWordWrap(True)
             innerLabel.setAlignment(Qt.AlignCenter)
+            
+            # innerFrame에 라벨들 추가
+            innerLayout.addWidget(holidayLabel)
+            innerLayout.addWidget(innerLabel)
+            
+            # 클릭 이벤트 설정
             innerFrame.mousePressEvent = partial(self.show_detail, label=label)
-
+            
+            # dayFrame에 titleFrame과 innerFrame 추가
+            dayLayout.addWidget(titleFrame)
+            dayLayout.addWidget(innerFrame)
+            
+            # 참조 저장
             self.dayFrames[f'dayFrame{item}'] = dayFrame
             setattr(dayFrame, 'label', label)
             setattr(dayFrame, 'innerFrame', innerFrame)
@@ -454,7 +499,7 @@ class Widget(QWidget):
         last_day = date(self.year, self.month, last_day_of_month)
         
         # 첫날의 요일 (0:월요일 ~ 6:일요일)
-        weekday = 0 if first_day.weekday() == 6 else first_day.weekday()
+        weekday = -1 if first_day.weekday() == 6 else first_day.weekday()
 
         url = 'http://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo'
         params ={'serviceKey' : 'FS3S0m+2dg9Sj8RC7nAmYT9mFoFhZL33RGaDdWBkVjjP9c4rpqIJqtRofnqpwo7J9GKEzsGiJm2nTqSpxBsaxw=='
@@ -493,14 +538,14 @@ class Widget(QWidget):
 
         # 달력에 날짜 표시
         for idx, day in enumerate(self.dayFrames.values()):
-            if idx < weekday or idx >= last_day_of_month + weekday:
+            if idx <= weekday or idx - weekday >= last_day_of_month + 1:
                 day.setVisible(False)
                 continue
             else:
                 day.setVisible(True)
 
-                current_date = date(self.year, self.month, idx - weekday + 1).isoformat()
-                day.label.setText(str(idx - weekday + 1))
+                current_date = date(self.year, self.month, idx - weekday).isoformat()
+                day.label.setText(str(idx - weekday))
                 day.holidayLabel.setText('')
 
                 if idx % 7 == 0:
@@ -547,16 +592,140 @@ class Widget(QWidget):
         if hasattr(self, 'detailFrame') and self.detailFrame is not None:
             self.detailFrame.deleteLater()
             self.detailFrame = None
-
+        
         # 라벨의 실제 위치 계산
         global_pos = label.mapToGlobal(label.rect().topLeft())
         parent_pos = self.mapFromGlobal(global_pos)
-        x = parent_pos.x() if parent_pos.x() + 375 < 840 else parent_pos.x() - 420
+        x = parent_pos.x() if parent_pos.x() + 375 < 840 else parent_pos.x() - 435
         y = parent_pos.y()
 
         self.detailFrame = QWidget(self)
-        self.detailFrame.setGeometry(x + 75, min(y, 400), 300, 500)
+        self.detailFrame.setGeometry(x + 130, min(y, 400), 300, 500)
         self.detailFrame.setProperty('class', 'detailFrame')
+
+        detailLayout = QVBoxLayout()
+        detailLayout.setContentsMargins(10, 20, 10, 0)  # 레이아웃 여백 제거
+        detailLayout.setSpacing(0)
+        detailLayout.setAlignment(Qt.AlignTop)
+        self.detailFrame.setLayout(detailLayout)
+
+        current_date = date(self.year, self.month, int(label.text())).isoformat()
+        events = self.event_dict.get(current_date, [])
+
+        event_texts = [f"{event['summary']} ({event['start']} ~ {event['end']})" for event in events]
+        
+        dateLabel = QLabel(f'{current_date}', self.detailFrame) #날짜 표시
+        detailLayout.addWidget(dateLabel)
+        dateLabel.setProperty('class', 'innerLabel')
+        dateLabel.setFont(self.nomal)
+        dateLabel.setAlignment(Qt.AlignCenter)
+        dateLabel.setFixedHeight(30)
+
+        blank = QLabel('', self.detailFrame)
+        blank.setFixedHeight(30)
+        detailLayout.addWidget(blank)
+
+        idx = -1
+        for idx, text in enumerate(event_texts):           
+            contentLayout = QHBoxLayout()
+            contentLayout.setContentsMargins(0, 0, 0, 0)
+            contentLayout.setSpacing(10)
+
+            container = QWidget(self.detailFrame)
+            container.setLayout(contentLayout)
+            container.setFixedHeight(30)
+            detailLayout.addWidget(container)
+
+            label = QLabel(text, self.detailFrame) #일정 내용
+            label.setProperty('class', 'innerLabel')
+            label.setFont(self.small)
+            label.setWordWrap(True)
+            label.setText(text)
+            label.setFixedWidth(220)  # 라벨 너비 고정
+
+            deleteBtn = QPushButton('삭제', self.detailFrame)
+            deleteBtn.setFont(self.small)
+            deleteBtn.clicked.connect(partial(self.delete_event, events[idx]['id']))
+            deleteBtn.setCursor(Qt.PointingHandCursor)
+            deleteBtn.setFixedWidth(50)  # 버튼 너비 고정
+
+            contentLayout.addWidget(label)
+            contentLayout.addWidget(deleteBtn)
+        
+        if idx > -1:
+            blank = QLabel('', self.detailFrame)
+            blank.setFixedHeight(30)
+            detailLayout.addWidget(blank)
+
+        inputContentLayout = QHBoxLayout()
+        inputContentLayout.setContentsMargins(0, 0, 0, 0)
+        inputContentLayout.setSpacing(10)
+        
+        inputContentContainer = QWidget(self.detailFrame)
+        inputContentContainer.setLayout(inputContentLayout)
+        inputContentContainer.setFixedHeight(30)
+        detailLayout.addWidget(inputContentContainer)
+
+        inputContentLabel = QLabel('일정 추가', self.detailFrame)
+        inputContentLayout.addWidget(inputContentLabel)
+        inputContentLabel.setProperty('class', 'innerLabel')
+        inputContentLabel.setFont(self.small)
+        inputContentLabel.setFixedWidth(50)
+
+        inputContent = QLineEdit(self.detailFrame)
+        inputContentLayout.addWidget(inputContent)
+        inputContent.setFont(self.small)
+        inputContent.setPlaceholderText('일정을 입력하세요')
+        inputContent.setFixedWidth(220)
+
+        inputStartLayout = QHBoxLayout()
+        inputStartLayout.setContentsMargins(0, 0, 0, 0)
+        inputStartLayout.setSpacing(10)
+
+        inputStartContainer = QWidget(self.detailFrame)
+        inputStartContainer.setLayout(inputStartLayout)
+        inputStartContainer.setFixedHeight(30)
+        detailLayout.addWidget(inputStartContainer)
+
+        inputStartLabel = QLabel('시작 시간', self.detailFrame)
+        inputStartLayout.addWidget(inputStartLabel)
+        inputStartLabel.setProperty('class', 'innerLabel')
+        inputStartLabel.setFont(self.small)
+        inputStartLabel.setFixedWidth(50)
+
+        inputStart = QDateTimeEdit(self.detailFrame)
+        inputStartLayout.addWidget(inputStart)
+        inputStart.setFont(self.small)
+        inputStart.setDisplayFormat('yyyy-MM-dd / HH:mm')
+        inputStart.setDateTime(datetime.strptime(current_date, '%Y-%m-%d'))
+        inputStart.setFixedWidth(220)
+
+        inputEndLayout = QHBoxLayout()
+        inputEndLayout.setContentsMargins(0, 0, 0, 0)
+        inputEndLayout.setSpacing(10)
+
+        inputEndContainer = QWidget(self.detailFrame)
+        inputEndContainer.setLayout(inputEndLayout)
+        inputEndContainer.setFixedHeight(30)
+        detailLayout.addWidget(inputEndContainer)
+
+        inputEndLabel = QLabel('종료 시간', self.detailFrame)
+        inputEndLayout.addWidget(inputEndLabel)
+        inputEndLabel.setProperty('class', 'innerLabel')
+        inputEndLabel.setFont(self.small)
+        inputEndLabel.setFixedWidth(50)
+
+        inputEnd = QDateTimeEdit(self.detailFrame)
+        inputEndLayout.addWidget(inputEnd)
+        inputEnd.setFont(self.small)
+        inputEnd.setDisplayFormat('yyyy-MM-dd / HH:mm')
+        inputEnd.setDateTime(datetime.strptime(current_date, '%Y-%m-%d') + timedelta(minutes=10))
+        inputEnd.setFixedWidth(220)
+
+        addBtn = QPushButton('추가', self.detailFrame)
+        detailLayout.addWidget(addBtn)
+        addBtn.setFont(self.small)
+        addBtn.clicked.connect(lambda: self.add_event(inputContent.text(), inputStart.dateTime(), inputEnd.dateTime()))
 
         exitBtn = QLabel('X', self.detailFrame)
         exitBtn.setGeometry(274, 3, 25, 25)
@@ -565,70 +734,6 @@ class Widget(QWidget):
         exitBtn.setFont(self.nomal)
         exitBtn.mousePressEvent = partial(self.detail_close, widget=self.detailFrame)
         exitBtn.setCursor(Qt.PointingHandCursor)
-
-        current_date = date(self.year, self.month, int(label.text())).isoformat()
-        events = self.event_dict.get(current_date, [])
-
-        event_texts = [f"{event['summary']} ({event['start']} ~ {event['end']})" for event in events]
-        
-        dateLabel = QLabel(f'{current_date}', self.detailFrame)
-        dateLabel.setGeometry(10, 20, 280, 30)
-        dateLabel.setProperty('class', 'innerLabel')
-        dateLabel.setFont(self.nomal)
-        dateLabel.setAlignment(Qt.AlignCenter)
-
-        offset = 80
-        for idx, text in enumerate(event_texts):
-            deleteBtn = QPushButton('삭제', self.detailFrame)
-            deleteBtn.setGeometry(240, 30 * idx + 60, 30, 30)
-            deleteBtn.setFont(self.small)
-            deleteBtn.clicked.connect(partial(self.delete_event, events[idx]['id']))
-            deleteBtn.setCursor(Qt.PointingHandCursor)
-
-            label = QLabel(text, self.detailFrame)
-            label.setGeometry(10, 30 * idx + 60, 230, 30)
-            label.setProperty('class', 'innerLabel')
-            label.setFont(self.small)
-            label.setWordWrap(True)
-            label.setText(text)
-            offset += 30
-
-        inputContentLabel = QLabel('일정 추가', self.detailFrame)
-        inputContentLabel.setGeometry(10, offset, 60, 30)
-        inputContentLabel.setProperty('class', 'innerLabel')
-        inputContentLabel.setFont(self.small)
-
-        inputContent = QLineEdit(self.detailFrame)
-        inputContent.setGeometry(70, offset, 220, 30)
-        inputContent.setFont(self.small)
-        inputContent.setPlaceholderText('일정을 입력하세요')
-
-        inputStartLabel = QLabel('시작 시간', self.detailFrame)
-        inputStartLabel.setGeometry(10, offset + 30, 60, 30)
-        inputStartLabel.setProperty('class', 'innerLabel')
-        inputStartLabel.setFont(self.small)
-
-        inputStart = QDateTimeEdit(self.detailFrame)
-        inputStart.setGeometry(70, offset + 30, 220, 30)
-        inputStart.setFont(self.small)
-        inputStart.setDisplayFormat('yyyy-MM-dd / HH:mm')
-        inputStart.setDateTime(datetime.strptime(current_date, '%Y-%m-%d'))
-
-        inputEndLabel = QLabel('종료 시간', self.detailFrame)
-        inputEndLabel.setGeometry(10, offset + 60, 60, 30)
-        inputEndLabel.setProperty('class', 'innerLabel')
-        inputEndLabel.setFont(self.small)
-
-        inputEnd = QDateTimeEdit(self.detailFrame)
-        inputEnd.setGeometry(70, offset + 60, 220, 30)
-        inputEnd.setFont(self.small)
-        inputEnd.setDisplayFormat('yyyy-MM-dd / HH:mm')
-        inputEnd.setDateTime(datetime.strptime(current_date, '%Y-%m-%d') + timedelta(minutes=10))
-
-        addBtn = QPushButton('추가', self.detailFrame)
-        addBtn.setGeometry(10, offset + 90, 280, 30)
-        addBtn.setFont(self.small)
-        addBtn.clicked.connect(lambda: self.add_event(inputContent.text(), inputStart.dateTime(), inputEnd.dateTime()))
 
         # 프레임을 최상단으로 올리기
         self.detailFrame.raise_()
@@ -853,7 +958,7 @@ if __name__ == '__main__':
 
     schedule.every().minute.at(":00").do(tray.check_and_notify)
     schedule.every(10).minutes.do(window.set_calendar)
-    schedule.every().day.at("00:00").do(window.set_calendar)
+    schedule.every().day.at("00:00:01").do(window.set_calendar)
 
     # 스케줄러 스레드 시작
     schedule_thread = threading.Thread(target=run_schedule)
