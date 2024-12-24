@@ -12,6 +12,14 @@ from win10toast import ToastNotifier
 from pystray import Icon, Menu, MenuItem
 from PIL import Image
 
+import logging
+
+logging.basicConfig(filename='app.log', level=logging.DEBUG,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+
+logging.basicConfig(filename='error.log', level=logging.ERROR,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+
 # Google API 관련 라이브러리
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -54,7 +62,7 @@ class Public:
                     self.theme = config.get('theme', 'dark')
 
             except json.JSONDecodeError:
-                pass
+                logging.error('Error in load config')
         else:
             pass
 
@@ -73,7 +81,7 @@ class Public:
                 try:
                     creds.refresh(Request())
                 except Exception as e:
-                    print(f"Token refresh error: {e}")
+                    logging.error(f"Token refresh error: {e}")
                     creds = None
             
             # 새로운 인증 진행
@@ -89,7 +97,7 @@ class Public:
                     with open('token.json', 'w') as token:
                         token.write(creds.to_json())
                 except Exception as e:
-                    print(f"Authentication error: {e}")
+                    logging.error(f"Authentication error: {e}")
                     return None
         
         return creds
@@ -128,7 +136,7 @@ class Public:
 
             return event_dict
         except Exception as e:
-            print(f"Error fetching events: {e}")
+            logging.error(f"Error fetching events: {e}")
             return []
 
     def get_events(self):
@@ -318,9 +326,6 @@ class Widget(QWidget):
         self.month = now.month
         self.cal = calendar.Calendar(calendar.MONDAY)
 
-        today = date.today()
-        self.today = today.isoformat()
-
         self.nomal = QFont('나눔스퀘어 네오', 11, QFont.Bold)
         self.small = QFont('나눔스퀘어 네오', 9)
         self.big = QFont('나눔스퀘어 네오', 20, QFont.Bold)
@@ -491,6 +496,7 @@ class Widget(QWidget):
         widget.setStyleSheet(';'.join(new_style))
 
     def set_calendar(self):
+        logging.debug('set_calendar called')
         # 해당 월의 첫날 생성
         first_day = date(self.year, self.month, 1)
         
@@ -501,28 +507,31 @@ class Widget(QWidget):
         # 첫날의 요일 (0:월요일 ~ 6:일요일)
         weekday = -1 if first_day.weekday() == 6 else first_day.weekday()
 
-        url = 'http://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo'
-        params ={'serviceKey' : 'FS3S0m+2dg9Sj8RC7nAmYT9mFoFhZL33RGaDdWBkVjjP9c4rpqIJqtRofnqpwo7J9GKEzsGiJm2nTqSpxBsaxw=='
-                , 'solYear' : self.year
-                , 'solMonth' : str(self.month).zfill(2) }
-
-        response = requests.get(url, params=params)
-        # 바이트 데이터를 UTF-8로 디코딩
-        decoded_xml = response.content.decode('utf-8')
-
-        # XML을 Python 딕셔너리로 변환
-        xml_dict = xmltodict.parse(decoded_xml)
-
-        # dateName과 locdate를 추출하여 딕셔너리 생성
-        holiday_dict = {}
         try:
-            items = xml_dict.get('response', {}).get('body', {}).get('items', {}).get('item', [])
-        except AttributeError:
-            items = []
+            url = 'http://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo'
+            params ={'serviceKey' : 'FS3S0m+2dg9Sj8RC7nAmYT9mFoFhZL33RGaDdWBkVjjP9c4rpqIJqtRofnqpwo7J9GKEzsGiJm2nTqSpxBsaxw=='
+                    , 'solYear' : self.year
+                    , 'solMonth' : str(self.month).zfill(2) }
 
-        # items가 리스트가 아닌 경우 리스트로 변환
-        if isinstance(items, dict):
-            items = [items]
+            response = requests.get(url, params=params)
+            # 바이트 데이터를 UTF-8로 디코딩
+            decoded_xml = response.content.decode('utf-8')
+
+            # XML을 Python 딕셔너리로 변환
+            xml_dict = xmltodict.parse(decoded_xml)
+
+            # dateName과 locdate를 추출하여 딕셔너리 생성
+            holiday_dict = {}
+            try:
+                items = xml_dict.get('response', {}).get('body', {}).get('items', {}).get('item', [])
+            except AttributeError:
+                items = []
+
+            # items가 리스트가 아닌 경우 리스트로 변환
+            if isinstance(items, dict):
+                items = [items]
+        except Exception as e:
+            logging.error(f'Error in load holiday: {e}')
 
         for item in items:
             locdate = item.get('locdate')
@@ -545,28 +554,29 @@ class Widget(QWidget):
                 day.setVisible(True)
 
                 current_date = date(self.year, self.month, idx - weekday).isoformat()
+                today = date.today().isoformat()
                 day.label.setText(str(idx - weekday))
                 day.holidayLabel.setText('')
 
                 if idx % 7 == 0:
-                    if self.today == current_date:
+                    if today == current_date:
                         day.label.setProperty('class', 'tSundayTitle')
                     else:
                         day.label.setProperty('class', 'sundayTitle')
                 elif idx % 7 == 6:
-                    if self.today == current_date:
+                    if today == current_date:
                         day.label.setProperty('class', 'tSaturdayTitle')
                     else:
                         day.label.setProperty('class', 'saturdayTitle')
                 else:
-                    if self.today == current_date:
+                    if today == current_date:
                         day.label.setProperty('class', 'todayTitle')
                     else:
                         day.label.setProperty('class', 'dayTitle')
 
                 # 해당 날짜가 휴일인 경우 sundayTitle 스타일 적용
                 if current_date.replace('-', '') in holiday_dict:
-                    if self.today == current_date:
+                    if today == current_date:
                         day.label.setProperty('class', 'tSundayTitle')
                     else:
                         day.label.setProperty('class', 'sundayTitle')
@@ -764,7 +774,7 @@ class Widget(QWidget):
             self.set_calendar()
             self.show_detail(None, label)
         except Exception as e:
-            print(f"Error adding event: {e}")
+            logging.error(f"Error adding event: {e}")
 
     def delete_event(self, event_id, label):
 
@@ -776,7 +786,7 @@ class Widget(QWidget):
             self.set_calendar()
             self.show_detail(None, label)
         except Exception as e:
-            print(f"Error deleting event: {e}")
+            logging.error(f"Error deleting event: {e}")
 
     def prev_month(self, e):
         self.month -= 1
@@ -879,6 +889,7 @@ class Tray:
 
     def check_and_notify(self):
         now = datetime.now()
+        logging.debug('check notification called')
         keys_to_delete = []
         if self.event_dict != None:
             for event_time_str, summary in self.event_dict.items():
@@ -892,6 +903,7 @@ class Tray:
             del self.event_dict[key]
 
     def set_notification(self):
+        logging.debug('set notification called')
         for event in public.noti_events.values():
             for e in event:
                 start = e.get('start', {})
@@ -914,6 +926,8 @@ class Tray:
         None
 
     def on_reload_event(self):
+        logging.debug('reload called')
+
         window.set_calendar()
         self.reload_noti()
         
