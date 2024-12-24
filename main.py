@@ -636,20 +636,20 @@ class Widget(QWidget):
             container.setFixedHeight(30)
             detailLayout.addWidget(container)
 
-            label = QLabel(text, self.detailFrame) #일정 내용
-            label.setProperty('class', 'innerLabel')
-            label.setFont(self.small)
-            label.setWordWrap(True)
-            label.setText(text)
-            label.setFixedWidth(220)  # 라벨 너비 고정
+            contentLabel = QLabel(text, self.detailFrame) #일정 내용
+            contentLabel.setProperty('class', 'innerLabel')
+            contentLabel.setFont(self.small)
+            contentLabel.setWordWrap(True)
+            contentLabel.setText(text)
+            contentLabel.setFixedWidth(220)  # 라벨 너비 고정
 
             deleteBtn = QPushButton('삭제', self.detailFrame)
             deleteBtn.setFont(self.small)
-            deleteBtn.clicked.connect(partial(self.delete_event, events[idx]['id']))
+            deleteBtn.clicked.connect(partial(self.delete_event, events[idx]['id'], label))
             deleteBtn.setCursor(Qt.PointingHandCursor)
             deleteBtn.setFixedWidth(50)  # 버튼 너비 고정
 
-            contentLayout.addWidget(label)
+            contentLayout.addWidget(contentLabel)
             contentLayout.addWidget(deleteBtn)
         
         if idx > -1:
@@ -725,7 +725,7 @@ class Widget(QWidget):
         addBtn = QPushButton('추가', self.detailFrame)
         detailLayout.addWidget(addBtn)
         addBtn.setFont(self.small)
-        addBtn.clicked.connect(lambda: self.add_event(inputContent.text(), inputStart.dateTime(), inputEnd.dateTime()))
+        addBtn.clicked.connect(lambda: self.add_event(str(inputContent.text()), inputStart.dateTime(), inputEnd.dateTime(), label))
 
         exitBtn = QLabel('X', self.detailFrame)
         exitBtn.setGeometry(274, 3, 25, 25)
@@ -743,7 +743,7 @@ class Widget(QWidget):
         widget.deleteLater()
         self.detailFrame = None
 
-    def add_event(self, summary, start, end):
+    def add_event(self, summary, start, end, label):
         if not public.service:
             return
 
@@ -762,10 +762,11 @@ class Widget(QWidget):
         try:
             public.service.events().insert(calendarId='primary', body=event).execute()
             self.set_calendar()
+            self.show_detail(None, label)
         except Exception as e:
             print(f"Error adding event: {e}")
 
-    def delete_event(self, event_id):
+    def delete_event(self, event_id, label):
 
         if not public.service:
             return
@@ -773,6 +774,7 @@ class Widget(QWidget):
         try:
             public.service.events().delete(calendarId='primary', eventId=event_id).execute()
             self.set_calendar()
+            self.show_detail(None, label)
         except Exception as e:
             print(f"Error deleting event: {e}")
 
@@ -912,10 +914,6 @@ class Tray:
         None
 
     def on_reload_event(self):
-        public.noti_events = public.get_calendar_events(
-            datetime.combine(datetime.now(), datetime.min.time()),
-            datetime.combine(datetime.now(), datetime.max.time())
-        )
         window.set_calendar()
         self.reload_noti()
         
@@ -923,7 +921,8 @@ class Tray:
         result = []
         for time, content in self.event_dict.items():
             result.append(f"{time} - {content}")
-        content = " / ".join(result)
+
+        content = " / ".join(result) if len(result) else 'No Event Today...'
 
         self.send_notification(content)
 
