@@ -14,6 +14,9 @@ from PIL import Image
 
 import logging
 
+if os.path.exists('app.log'):
+    os.remove('app.log')
+
 logging.basicConfig(filename='app.log', level=logging.DEBUG,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -120,19 +123,31 @@ class Public:
             event_dict = {}
             for event in events:
                 start = event.get('start', {}).get('dateTime') if event.get('start', {}).get('dateTime') else event.get('start', {}).get('date')
-                end = event.get('end', {}).get('dateTime') if event.get('end', {}).get('dateTime') else event.get('end', {}).get('date')
+                end = event.get('end', {}).get('dateTime') if event.get('end', {}).get('dateTime') else event.get('start', {}).get('date')
 
                 if start and end:
-                    event_date = datetime.fromisoformat(start).date().isoformat()
-                    if event_date not in event_dict:
-                        event_dict[event_date] = []
+                    if datetime.fromisoformat(start).date() != datetime.fromisoformat(end).date():
+                        for long in self.date_range(start, end):
+                            if long.isoformat() not in event_dict:
+                                event_dict[long.isoformat()] = []
 
-                    event_dict[event_date].append({
-                        "id": event.get('id'),
-                        "summary": event.get('summary'), 
-                        "start": datetime.fromisoformat(start).time().isoformat(), 
-                        "end": datetime.fromisoformat(end).time().isoformat()
-                    })
+                            event_dict[long.isoformat()].append({
+                                "id": event.get('id'),
+                                "summary": event.get('summary'),
+                                "start": datetime.fromisoformat(start).date().isoformat(),
+                                "end": datetime.fromisoformat(end).date().isoformat()
+                            })
+                    else:
+                        event_date = datetime.fromisoformat(start).date().isoformat()
+                        if event_date not in event_dict:
+                            event_dict[event_date] = []
+
+                        event_dict[event_date].append({
+                            "id": event.get('id'),
+                            "summary": event.get('summary'), 
+                            "start": datetime.fromisoformat(start).time().isoformat(), 
+                            "end": datetime.fromisoformat(end).time().isoformat()
+                        })
 
             return event_dict
         except Exception as e:
@@ -140,10 +155,57 @@ class Public:
             return []
 
     def get_events(self):
-        return self.get_calendar_events(
-            datetime.combine(datetime.now(), datetime.min.time()),
-            datetime.combine(datetime.now(), datetime.max.time())
-        )
+        if not self.service:
+            return []
+        # 이거 왜 하루 전으로 해야 오늘 가져옴....? 머임......?
+        try:
+            start_date = datetime.combine(datetime.now()-timedelta(days=1), datetime.min.time())
+            end_date = datetime.combine(datetime.now()-timedelta(days=1), datetime.max.time())
+
+            events_result = self.service.events().list(
+                calendarId='primary',
+                timeMin=start_date.isoformat() + 'Z',
+                timeMax=end_date.isoformat() + 'Z',
+                singleEvents=True,
+                orderBy='startTime',
+                fields='items(summary,start/dateTime,end/dateTime)'
+            ).execute()
+            events = events_result.get('items', [])
+        
+            logging.debug(events)
+
+            noti_dict = {}
+            for event in events:
+                start = event.get('start', {}).get('dateTime') if event.get('start', {}).get('dateTime') else None
+                end = event.get('end', {}).get('dateTime') if event.get('end', {}).get('dateTime') else None
+
+                if start and end:
+                    event_date = start_date.date().isoformat()
+
+                    if event_date not in noti_dict:
+                        noti_dict[event_date] = []
+
+                    noti_dict[event_date].append({
+                        "summary": event.get('summary'), 
+                        "start": datetime.fromisoformat(start).time().isoformat(), 
+                        "end": datetime.fromisoformat(end).time().isoformat()
+                    })
+
+            return noti_dict
+
+        except Exception as e:
+            logging.error(f"Error fetching events: {e}")
+            return []
+
+    def date_range(self, start, end):
+        date_list = []
+        start_date = datetime.fromisoformat(start).date()
+        end_date = datetime.fromisoformat(end).date()
+        while start_date <= end_date:
+            date_list.append(start_date)
+            start_date += timedelta(days=1)
+
+        return date_list
 
 class Theme(Enum):
     DARK = "dark"
@@ -206,6 +268,7 @@ class ThemeManager:
                 .title {{
                     background-color: rgba(0, 0, 0, 0);
                     color: {white};
+                    margin-bottom: 30px;
                 }}
                             
                 .day {{
@@ -242,6 +305,7 @@ class ThemeManager:
                 .titleBtn {{
                     background-color: rgba(0, 0, 0, 0);
                     color: {white};
+                    margin-bottom: 30px;
                 }}
 
                 .exitBtn {{
@@ -297,6 +361,9 @@ class ThemeManager:
                 }}
 
                 .innerLabel {{
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    padding-top: 10px;
                     color: {white};
                 }}
 
@@ -451,7 +518,7 @@ class Widget(QWidget):
             innerLabel.setProperty('class', 'innerLabel')
             innerLabel.setFont(self.small)
             innerLabel.setWordWrap(True)
-            innerLabel.setAlignment(Qt.AlignCenter)
+            innerLabel.setAlignment(Qt.AlignHCenter)
             
             # innerFrame에 라벨들 추가
             innerLayout.addWidget(holidayLabel)
@@ -904,13 +971,17 @@ class Tray:
 
     def set_notification(self):
         logging.debug('set notification called')
+
         for event in public.noti_events.values():
             for e in event:
                 start = e.get('start', {})
                 end = e.get('end', {})
                 if start and end:
                     start_time = start
-                    self.event_dict[start_time] = e.get('summary', 'No Title')
+                    if start_time not in self.event_dict:
+                        self.event_dict[start_time] = []
+
+                    self.event_dict[start_time].append(e.get('summary', 'No Title'))
 
     def reload_noti(self):
         public.noti_events = public.get_events()
@@ -971,7 +1042,7 @@ if __name__ == '__main__':
 
     schedule.every().minute.at(":00").do(tray.check_and_notify)
     schedule.every(10).minutes.do(window.set_calendar)
-    schedule.every().day.at("00:00:01").do(window.set_calendar)
+    schedule.every().day.at("00:00").do(window.set_calendar)
 
     # 스케줄러 스레드 시작
     schedule_thread = threading.Thread(target=run_schedule)
