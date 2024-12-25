@@ -2,7 +2,7 @@ import sys, os, json, calendar, requests, xmltodict, schedule, time, threading
 from datetime import datetime, timedelta, date
 from PySide6.QtWidgets import QApplication, QWidget, QLabel, QLineEdit, QDateTimeEdit, QPushButton, QGridLayout, QVBoxLayout, QHBoxLayout, QSizePolicy
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QMovie
 from functools import partial
 
 from enum import Enum
@@ -564,6 +564,7 @@ class Widget(QWidget):
 
     def set_calendar(self):
         logging.debug('set_calendar called')
+
         # 해당 월의 첫날 생성
         first_day = date(self.year, self.month, 1)
         
