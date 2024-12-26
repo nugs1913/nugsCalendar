@@ -107,7 +107,14 @@ class Public:
     
     def get_calendar_events(self, start_date, end_date):
         if not self.service:
-            return []
+            # Google Calendar 인증 및 서비스 설정
+            self.creds = self.get_google_credentials()
+            
+            # Google Calendar 서비스 생성
+            if self.creds:
+                self.service = build('calendar', 'v3', credentials=self.creds)
+            else:
+                self.service = None
 
         try:
             events_result = self.service.events().list(
