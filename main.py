@@ -116,50 +116,55 @@ class Public:
             else:
                 self.service = None
 
-        try:
-            events_result = self.service.events().list(
-                calendarId='primary',
-                timeMin=start_date.isoformat() + 'Z',
-                timeMax=end_date.isoformat() + 'Z',
-                singleEvents=True,
-                orderBy='startTime',
-                fields='items(id,summary,start/dateTime,end/dateTime, start/date, end/date)'
-            ).execute()
-            events = events_result.get('items', [])
-        
-            event_dict = {}
-            for event in events:
-                start = event.get('start', {}).get('dateTime') if event.get('start', {}).get('dateTime') else event.get('start', {}).get('date')
-                end = event.get('end', {}).get('dateTime') if event.get('end', {}).get('dateTime') else event.get('start', {}).get('date')
+        max_retries = 3
 
-                if start and end:
-                    if datetime.fromisoformat(start).date() != datetime.fromisoformat(end).date():
-                        for long in self.date_range(start, end):
-                            if long.isoformat() not in event_dict:
-                                event_dict[long.isoformat()] = []
+        for attempt in range(max_retries):
+            try:
+                events_result = self.service.events().list(
+                    calendarId='primary',
+                    timeMin=start_date.isoformat() + 'Z',
+                    timeMax=end_date.isoformat() + 'Z',
+                    singleEvents=True,
+                    orderBy='startTime',
+                    fields='items(id,summary,start/dateTime,end/dateTime, start/date, end/date)'
+                ).execute()
+                events = events_result.get('items', [])
+            
+                event_dict = {}
+                for event in events:
+                    start = event.get('start', {}).get('dateTime') if event.get('start', {}).get('dateTime') else event.get('start', {}).get('date')
+                    end = event.get('end', {}).get('dateTime') if event.get('end', {}).get('dateTime') else event.get('start', {}).get('date')
 
-                            event_dict[long.isoformat()].append({
+                    if start and end:
+                        if datetime.fromisoformat(start).date() != datetime.fromisoformat(end).date():
+                            for long in self.date_range(start, end):
+                                if long.isoformat() not in event_dict:
+                                    event_dict[long.isoformat()] = []
+
+                                event_dict[long.isoformat()].append({
+                                    "id": event.get('id'),
+                                    "summary": event.get('summary'),
+                                    "start": datetime.fromisoformat(start).date().isoformat(),
+                                    "end": datetime.fromisoformat(end).date().isoformat()
+                                })
+                        else:
+                            event_date = datetime.fromisoformat(start).date().isoformat()
+                            if event_date not in event_dict:
+                                event_dict[event_date] = []
+
+                            event_dict[event_date].append({
                                 "id": event.get('id'),
-                                "summary": event.get('summary'),
-                                "start": datetime.fromisoformat(start).date().isoformat(),
-                                "end": datetime.fromisoformat(end).date().isoformat()
+                                "summary": event.get('summary'), 
+                                "start": datetime.fromisoformat(start).time().isoformat(), 
+                                "end": datetime.fromisoformat(end).time().isoformat()
                             })
-                    else:
-                        event_date = datetime.fromisoformat(start).date().isoformat()
-                        if event_date not in event_dict:
-                            event_dict[event_date] = []
 
-                        event_dict[event_date].append({
-                            "id": event.get('id'),
-                            "summary": event.get('summary'), 
-                            "start": datetime.fromisoformat(start).time().isoformat(), 
-                            "end": datetime.fromisoformat(end).time().isoformat()
-                        })
-
-            return event_dict
-        except Exception as e:
-            logging.error(f"Error fetching events: {e}")
-            return []
+                return event_dict
+            except Exception as e:
+                logging.error(f"Error fetching events: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # 지수 백오프
+                return []
 
     def get_events(self):
         if not self.service:
@@ -1011,9 +1016,12 @@ class Tray:
     def on_reload_event(self):
         logging.debug('reload called')
 
-        window.set_calendar()
-        self.reload_noti()
-        
+        try:
+            window.set_calendar()
+            self.reload_noti()
+        except Exception as e:
+            logging.error(f"Error in reload: {e}")
+
     def show_event_list(self):
         result = []
         for time, content in self.event_dict.items():
