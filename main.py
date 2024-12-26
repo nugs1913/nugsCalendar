@@ -367,6 +367,10 @@ class ThemeManager:
                     color: {white};
                 }}
 
+                .detailLabel{{
+                    color: {white};
+                }}
+
                 .holidayLabel {{
                     color: red;
                 }}
@@ -674,7 +678,7 @@ class Widget(QWidget):
         # 라벨의 실제 위치 계산
         global_pos = label.mapToGlobal(label.rect().topLeft())
         parent_pos = self.mapFromGlobal(global_pos)
-        x = parent_pos.x() if parent_pos.x() + 375 < 840 else parent_pos.x() - 435
+        x = parent_pos.x() - 5 if parent_pos.x() + 375 < 840 else parent_pos.x() - 435
         y = parent_pos.y()
 
         self.detailFrame = QWidget(self)
@@ -715,7 +719,7 @@ class Widget(QWidget):
             detailLayout.addWidget(container)
 
             contentLabel = QLabel(text, self.detailFrame) #일정 내용
-            contentLabel.setProperty('class', 'innerLabel')
+            contentLabel.setProperty('class', 'detailLabel')
             contentLabel.setFont(self.small)
             contentLabel.setWordWrap(True)
             contentLabel.setText(text)
@@ -746,7 +750,7 @@ class Widget(QWidget):
 
         inputContentLabel = QLabel('일정 추가', self.detailFrame)
         inputContentLayout.addWidget(inputContentLabel)
-        inputContentLabel.setProperty('class', 'innerLabel')
+        inputContentLabel.setProperty('class', 'detailLabel')
         inputContentLabel.setFont(self.small)
         inputContentLabel.setFixedWidth(50)
 
@@ -767,7 +771,7 @@ class Widget(QWidget):
 
         inputStartLabel = QLabel('시작 시간', self.detailFrame)
         inputStartLayout.addWidget(inputStartLabel)
-        inputStartLabel.setProperty('class', 'innerLabel')
+        inputStartLabel.setProperty('class', 'detailLabel')
         inputStartLabel.setFont(self.small)
         inputStartLabel.setFixedWidth(50)
 
@@ -789,7 +793,7 @@ class Widget(QWidget):
 
         inputEndLabel = QLabel('종료 시간', self.detailFrame)
         inputEndLayout.addWidget(inputEndLabel)
-        inputEndLabel.setProperty('class', 'innerLabel')
+        inputEndLabel.setProperty('class', 'detailLabel')
         inputEndLabel.setFont(self.small)
         inputEndLabel.setFixedWidth(50)
 
