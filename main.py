@@ -1,8 +1,8 @@
-import sys, os, json, calendar, requests, xmltodict, schedule, time, threading
+import sys, os, json, calendar, requests, xmltodict, schedule, time, threading, sys
 from datetime import datetime, timedelta, date
 from PySide6.QtWidgets import QApplication, QWidget, QLabel, QLineEdit, QDateTimeEdit, QPushButton, QGridLayout, QVBoxLayout, QHBoxLayout, QSizePolicy
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont, QMovie
+from PySide6.QtCore import Qt, QTimer, QTime, QDateTime
+from PySide6.QtGui import QFont
 from functools import partial
 
 from enum import Enum
@@ -50,6 +50,8 @@ class Public:
         self.height = 940
         self.theme = 'light'
 
+        self.auto_sync = True
+
         self.load_config()
 
     def load_config(self):
@@ -90,8 +92,14 @@ class Public:
             # 새로운 인증 진행
             if not creds:
                 try:
+                    if getattr(sys, 'frozen', False):
+                        client_secret_path = os.path.join(sys._MEIPASS, 'client_secret.json')
+                    else:
+                        client_secret_path = 'client_secret.json'
+                    
+
                     flow = InstalledAppFlow.from_client_secrets_file(
-                        'client_secret.json',  # OAuth 클라이언트 설정 JSON 파일
+                        client_secret_path,  # OAuth 클라이언트 설정 JSON 파일
                         SCOPES
                     )
                     creds = flow.run_local_server(port=0)
@@ -419,6 +427,20 @@ class Widget(QWidget):
     def set_theme(self, theme: Theme):
         self.theme_manager.set_theme(theme)
         self.update_stylesheet()
+
+        x = self.pos().x()
+        y = self.pos().y()
+
+        # 변경된 테마 저장
+        config = {
+            'x': x,
+            'y': y,
+            'width': self.width(),
+            'height': self.height(),
+            'theme': self.theme_manager.current_theme.value
+        }
+        with open(self.config_file, 'w') as f:
+            json.dump(config, f)
     
     def update_stylesheet(self):
         self.setStyleSheet(self.theme_manager.get_stylesheet())
@@ -792,6 +814,7 @@ class Widget(QWidget):
         inputStart.setFont(self.small)
         inputStart.setDisplayFormat('yyyy-MM-dd / HH:mm')
         inputStart.setDateTime(datetime.strptime(current_date, '%Y-%m-%d'))
+        inputStart.dateTimeChanged.connect(lambda: inputEnd.setMinimumDateTime(inputStart.dateTime() + timedelta(minutes=10)))
         inputStart.setFixedWidth(220)
 
         inputEndLayout = QHBoxLayout()
@@ -960,7 +983,49 @@ class Tray:
 
         self.event_dict = {}
 
+        self.auto_sync = QTimer()
+
+        # window 객체가 생성된 후에 connection 설정
+        def setup_timer():
+            self.auto_sync.timeout.connect(window.set_calendar)
+            if public.auto_sync:
+                self.auto_sync_control()
+        
+        QTimer.singleShot(0, setup_timer)
+
+        # 아이콘 설정
+        self.icon = Icon(
+            "NugsCalendarNotifier",
+            self.create_image(),
+            menu=self.make_menu()
+        )
+
         self.set_notification()
+
+    def auto_sync_control(self):
+        if self.auto_sync.isActive():
+            self.auto_sync.stop()
+            public.auto_sync = False
+            self.send_notification('Auto Sync Off')
+        else:
+            self.auto_sync.setInterval(600000)  # 10분
+            self.auto_sync.start()
+            public.auto_sync = True
+            self.send_notification('Auto Sync On')
+
+    def make_menu(self):
+        return Menu(
+            MenuItem("Check Event List", self.show_event_list),
+            MenuItem("Reload Events", self.on_reload_event),
+            Menu.SEPARATOR,  # 구분선 추가
+            MenuItem("Theme Toggle", window.toggle_theme),
+            MenuItem(
+            f'Auto Sync: {"OFF" if self.auto_sync.isActive() else "ON"}',
+            self.auto_sync_control
+            ),
+            Menu.SEPARATOR,  # 구분선 추가
+            MenuItem("Exit", self.on_exit)
+        )
 
     def send_notification(self, content):
         self.toaster.show_toast(
@@ -972,33 +1037,40 @@ class Tray:
             )
 
     def check_and_notify(self):
-        now = datetime.now()
-        logging.debug('check notification called')
-        keys_to_delete = []
-        if self.event_dict != None:
-            for event_time_str, summary in self.event_dict.items():
-                event_time = datetime.strptime(event_time_str, "%H:%M:%S").time()
-                event_datetime = datetime.combine(now.date(), event_time)
-                if event_datetime - timedelta(minutes=10) <= now and now <= event_datetime:
-                    self.send_notification(summary)
-                    keys_to_delete.append(event_time_str)
+        try:
+            now = datetime.now()
+            logging.debug('check notification called')
+            keys_to_delete = []
+            if self.event_dict != None:
+                for event_time_str, summary in self.event_dict.items():
+                    event_time = datetime.strptime(event_time_str, "%H:%M:%S").time()
+                    event_datetime = datetime.combine(now.date(), event_time)
+                    if event_datetime - timedelta(minutes=10) <= now and now <= event_datetime:
+                        self.send_notification(summary)
+                        keys_to_delete.append(event_time_str)
 
-        for key in keys_to_delete:
-            del self.event_dict[key]
+            for key in keys_to_delete:
+                del self.event_dict[key]
+        except Exception as e:
+            logging.error(f'Error in checking noti events: {e}')
 
     def set_notification(self):
         logging.debug('set notification called')
 
-        for event in public.noti_events.values():
-            for e in event:
-                start = e.get('start', {})
-                end = e.get('end', {})
-                if start and end:
-                    start_time = start
-                    if start_time not in self.event_dict:
-                        self.event_dict[start_time] = []
+        try:
+            for event in public.noti_events.values():
+                for e in event:
+                    start = e.get('start', {})
+                    end = e.get('end', {})
+                    if start and end:
+                        start_time = start
+                        if start_time not in self.event_dict:
+                            self.event_dict[start_time] = []
 
-                    self.event_dict[start_time].append(e.get('summary', 'No Title'))
+                        self.event_dict[start_time].append(e.get('summary', 'No Title'))
+        except Exception as e:
+            logging.error(f'Error in set noti events: {e}')
+    
 
     def reload_noti(self):
         public.noti_events = public.get_events()
@@ -1034,23 +1106,26 @@ class Tray:
     def create_image(self):
         image = Image.open('icon.ico')
         return image
-    
-    def tray_run(self):
-        # 메뉴 설정
-        menu = Menu(
-            MenuItem("Check Event List", self.show_event_list),
-            MenuItem("Reload Events", self.on_reload_event),
-            MenuItem("Exit", self.on_exit)
-        )
 
-        # 아이콘 설정
-        self.icon = Icon("NugsCalendarNotifier", self.create_image(), menu=menu)
+    def tray_run(self):
         self.icon.run_detached()
 
-def run_schedule():
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
+def start_timers():
+    # check_and_notify를 매 분 0초에 실행
+    def schedule_check_and_notify():
+        tray.check_and_notify()
+        QTimer.singleShot(60000, schedule_check_and_notify)  # 매 1분마다 실행
+
+    next_minute = QDateTime.currentDateTime().addSecs(60 - QTime.currentTime().second())
+    QTimer.singleShot(next_minute.toMSecsSinceEpoch() - QDateTime.currentMSecsSinceEpoch(), schedule_check_and_notify)
+
+    # set_calendar를 매일 00:00에 실행
+    def schedule_set_calendar():
+        window.set_calendar()
+        QTimer.singleShot(86400000, schedule_set_calendar)  # 매일 00:00에 실행
+
+    next_midnight = QDateTime.currentDateTime().addDays(1).toMSecsSinceEpoch() // 86400000 * 86400000
+    QTimer.singleShot(next_midnight - QDateTime.currentMSecsSinceEpoch(), schedule_set_calendar)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
@@ -1060,15 +1135,16 @@ if __name__ == '__main__':
 
     window.show()
 
-    schedule.every().minute.at(":00").do(tray.check_and_notify)
-    schedule.every(10).minutes.do(window.set_calendar)
-    schedule.every().day.at("00:00").do(window.set_calendar)
+    # schedule.every().minute.at(":00").do(tray.check_and_notify)
+    # schedule.every(10).minutes.do(window.set_calendar)
+    # schedule.every().day.at("00:00").do(window.set_calendar)
 
-    # 스케줄러 스레드 시작
-    schedule_thread = threading.Thread(target=run_schedule)
-    schedule_thread.daemon = True
-    schedule_thread.start()
+    # # 스케줄러 스레드 시작
+    # schedule_thread = threading.Thread(target=run_schedule)
+    # schedule_thread.daemon = True
+    # schedule_thread.start()
 
+    start_timers()
     tray.tray_run()
 
     app.aboutToQuit.connect(window.on_closing)
