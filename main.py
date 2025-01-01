@@ -1096,7 +1096,7 @@ def start_timers():
 
     # set_calendar를 매일 00:00에 실행
     def schedule_set_calendar():
-        window.set_calendar()
+        tray.on_reload_event()
         QTimer.singleShot(86400000, schedule_set_calendar)  # 매일 00:00에 실행
 
     next_midnight = QDateTime.currentDateTime().addDays(1).toMSecsSinceEpoch() // 86400000 * 86400000
@@ -1112,7 +1112,7 @@ if __name__ == '__main__':
 
     if public.auto_sync:
         auto_sync = QTimer()
-        auto_sync.timeout.connect(window.set_calendar)
+        auto_sync.timeout.connect(tray.on_reload_event)
         auto_sync.start(600000)  # 10분마다 실행
 
     start_timers()
