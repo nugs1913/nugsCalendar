@@ -257,7 +257,7 @@ class ThemeManager:
                 white='#021526',
                 black='#F5EFE7',
                 gray='#021526',
-                highlight='#03346E',
+                highlight='#CBA35C',
                 background='#FFFFFF',
                 text='#000000'
             ),
@@ -983,16 +983,6 @@ class Tray:
 
         self.event_dict = {}
 
-        self.auto_sync = QTimer()
-
-        # window 객체가 생성된 후에 connection 설정
-        def setup_timer():
-            self.auto_sync.timeout.connect(window.set_calendar)
-            if public.auto_sync:
-                self.auto_sync_control()
-        
-        QTimer.singleShot(0, setup_timer)
-
         # 아이콘 설정
         self.icon = Icon(
             "NugsCalendarNotifier",
@@ -1002,27 +992,12 @@ class Tray:
 
         self.set_notification()
 
-    def auto_sync_control(self):
-        if self.auto_sync.isActive():
-            self.auto_sync.stop()
-            public.auto_sync = False
-            self.send_notification('Auto Sync Off')
-        else:
-            self.auto_sync.setInterval(600000)  # 10분
-            self.auto_sync.start()
-            public.auto_sync = True
-            self.send_notification('Auto Sync On')
-
     def make_menu(self):
         return Menu(
             MenuItem("Check Event List", self.show_event_list),
             MenuItem("Reload Events", self.on_reload_event),
             Menu.SEPARATOR,  # 구분선 추가
             MenuItem("Theme Toggle", window.toggle_theme),
-            MenuItem(
-            f'Auto Sync: {"OFF" if self.auto_sync.isActive() else "ON"}',
-            self.auto_sync_control
-            ),
             Menu.SEPARATOR,  # 구분선 추가
             MenuItem("Exit", self.on_exit)
         )
@@ -1135,14 +1110,10 @@ if __name__ == '__main__':
 
     window.show()
 
-    # schedule.every().minute.at(":00").do(tray.check_and_notify)
-    # schedule.every(10).minutes.do(window.set_calendar)
-    # schedule.every().day.at("00:00").do(window.set_calendar)
-
-    # # 스케줄러 스레드 시작
-    # schedule_thread = threading.Thread(target=run_schedule)
-    # schedule_thread.daemon = True
-    # schedule_thread.start()
+    if public.auto_sync:
+        auto_sync = QTimer()
+        auto_sync.timeout.connect(window.set_calendar)
+        auto_sync.start(600000)  # 10분마다 실행
 
     start_timers()
     tray.tray_run()
