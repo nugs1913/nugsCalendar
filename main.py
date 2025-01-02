@@ -176,11 +176,19 @@ class Public:
 
     def get_events(self):
         if not self.service:
-            return []
-        # 이거 왜 하루 전으로 해야 오늘 가져옴....? 머임......?
+            # Google Calendar 인증 및 서비스 설정
+            self.creds = self.get_google_credentials()
+            
+            # Google Calendar 서비스 생성
+            if self.creds:
+                self.service = build('calendar', 'v3', credentials=self.creds)
+            else:
+                self.service = None
+
         try:
-            start_date = datetime.combine(datetime.now()-timedelta(days=1), datetime.min.time())
-            end_date = datetime.combine(datetime.now()-timedelta(days=1), datetime.max.time())
+            now = datetime.now()
+            start_date = now - timedelta(hours=24)
+            end_date = now + timedelta(hours=24)
 
             events_result = self.service.events().list(
                 calendarId='primary',
@@ -191,13 +199,11 @@ class Public:
                 fields='items(summary,start/dateTime,end/dateTime)'
             ).execute()
             events = events_result.get('items', [])
-        
-            logging.debug(events)
 
             noti_dict = {}
             for event in events:
-                start = event.get('start', {}).get('dateTime') if event.get('start', {}).get('dateTime') else None
-                end = event.get('end', {}).get('dateTime') if event.get('end', {}).get('dateTime') else None
+                start = event.get('start', {}).get('dateTime')
+                end = event.get('end', {}).get('dateTime')
 
                 if start and end:
                     event_date = start_date.date().isoformat()
@@ -814,7 +820,12 @@ class Widget(QWidget):
         inputStart.setFont(self.small)
         inputStart.setDisplayFormat('yyyy-MM-dd / HH:mm')
         inputStart.setDateTime(datetime.strptime(current_date, '%Y-%m-%d'))
-        inputStart.dateTimeChanged.connect(lambda: inputEnd.setMinimumDateTime(inputStart.dateTime() + timedelta(minutes=10)))
+        inputStart.dateTimeChanged.connect(
+            lambda:(
+                inputEnd.setMinimumDateTime(inputStart.dateTime().addSecs(60)),
+                inputEnd.setDateTime(inputStart.dateTime().addSecs(3600))
+            )
+        )
         inputStart.setFixedWidth(220)
 
         inputEndLayout = QHBoxLayout()
@@ -836,7 +847,7 @@ class Widget(QWidget):
         inputEndLayout.addWidget(inputEnd)
         inputEnd.setFont(self.small)
         inputEnd.setDisplayFormat('yyyy-MM-dd / HH:mm')
-        inputEnd.setDateTime(datetime.strptime(current_date, '%Y-%m-%d') + timedelta(minutes=10))
+        inputEnd.setDateTime(datetime.strptime(current_date, '%Y-%m-%d') + timedelta(hours=1))
         inputEnd.setFixedWidth(220)
 
         addBtn = QPushButton('추가', self.detailFrame)
@@ -1003,9 +1014,19 @@ class Tray:
         )
 
     def send_notification(self, content):
+
+        if type(content) == str:
+            text = content
+        else:
+            text = []
+            for t in content:
+                text.append(t)
+            
+            text = ", ".join(text)
+
         self.toaster.show_toast(
             title="Nugs Calendar", 
-            msg=content, 
+            msg=text, 
             icon_path='icon.ico', 
             duration=0, 
             threaded=True
@@ -1020,6 +1041,7 @@ class Tray:
                 for event_time_str, summary in self.event_dict.items():
                     event_time = datetime.strptime(event_time_str, "%H:%M:%S").time()
                     event_datetime = datetime.combine(now.date(), event_time)
+                    
                     if event_datetime - timedelta(minutes=10) <= now and now <= event_datetime:
                         self.send_notification(summary)
                         keys_to_delete.append(event_time_str)
@@ -1051,7 +1073,6 @@ class Tray:
         public.noti_events = public.get_events()
         self.event_dict = {}
         self.set_notification()
-        self.send_notification('Reload Complete')
 
     def on_exit(self, icon):
         icon.stop()
@@ -1066,15 +1087,24 @@ class Tray:
         try:
             window.set_calendar()
             self.reload_noti()
+            self.send_notification('Reload Complete')
         except Exception as e:
             logging.error(f"Error in reload: {e}")
+
+    def reload_by_sync(self):
+        logging.debug('reload by sync called')
+        try:
+            window.set_calendar()
+            self.reload_noti()
+        except Exception as e:
+            logging.error(f"Error in reload by sync: {e}")
 
     def show_event_list(self):
         result = []
         for time, content in self.event_dict.items():
             result.append(f"{time} - {content}")
 
-        content = " / ".join(result) if len(result) else 'No Event Today...'
+        content = " / ".join(result) if len(result) else 'No Event in 24hours...'
 
         self.send_notification(content)
 
@@ -1112,7 +1142,7 @@ if __name__ == '__main__':
 
     if public.auto_sync:
         auto_sync = QTimer()
-        auto_sync.timeout.connect(tray.on_reload_event)
+        auto_sync.timeout.connect(tray.reload_by_sync)
         auto_sync.start(600000)  # 10분마다 실행
 
     start_timers()
