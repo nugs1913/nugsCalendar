@@ -14,7 +14,7 @@ from pystray import Icon, Menu, MenuItem
 from PIL import Image
 import win32com.client
 
-import subprocess, requests
+import subprocess, requests, zipfile, shutil
 from packaging import version
 
 import logging
@@ -40,23 +40,18 @@ from packaging import version
 
 class GitHubUpdater:
     def __init__(self, current_version):
-        """
-        :param owner: GitHub 저장소 소유자 이름
-        :param repo: GitHub 저장소 이름
-        :param current_version: 현재 프로그램 버전 (예: "1.0.0")
-        :param access_token: GitHub 개인 액세스 토큰
-        """
-        owner = 'nugs1913'
-        repo = 'nugsCalendar'
+        self.owner = 'nugs1913'
+        self.repo = 'nugsCalendar'
         self.current_version = current_version
-        self.github_api = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+        self.github_api = f"https://api.github.com/repos/{self.owner}/{self.repo}/releases/latest"
         self.headers = {
             'Authorization': f'token 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',
             'Accept': 'application/vnd.github.v3+json'
         }
+        # 임시 디렉토리 설정
+        self.temp_dir = "temp_update"
         
     def check_for_updates(self):
-        """최신 버전이 있는지 확인"""
         try:
             response = requests.get(self.github_api, headers=self.headers)
             response.raise_for_status()
@@ -72,49 +67,78 @@ class GitHubUpdater:
             print(f"업데이트 확인 중 오류 발생: {e}")
             return None
     
-    def download_update(self, asset_url, filename):
-        """업데이트 파일 다운로드"""
+    def download_and_extract_update(self, asset_url, zip_filename):
+        """ZIP 파일 다운로드 및 압축 해제"""
         try:
-            response = requests.get(
-                asset_url, 
-                headers=self.headers,
-                stream=True
-            )
+            # 임시 디렉토리 생성
+            if os.path.exists(self.temp_dir):
+                shutil.rmtree(self.temp_dir)
+            os.makedirs(self.temp_dir)
+            
+            # ZIP 파일 다운로드
+            zip_path = os.path.join(self.temp_dir, zip_filename)
+            response = requests.get(asset_url, headers=self.headers, stream=True)
             response.raise_for_status()
             
             total_size = int(response.headers.get('content-length', 0))
             block_size = 1024
             downloaded = 0
             
-            with open(filename, 'wb') as file:
+            print("ZIP 파일 다운로드 중...")
+            with open(zip_path, 'wb') as file:
                 for data in response.iter_content(block_size):
                     file.write(data)
                     downloaded += len(data)
                     progress = int((downloaded / total_size) * 100)
                     print(f"\r다운로드 진행률: {progress}%", end='')
             
-            print("\n다운로드 완료!")
+            print("\nZIP 파일 압축 해제 중...")
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(self.temp_dir)
+            
+            # ZIP 파일 삭제
+            os.remove(zip_path)
+            
             return True
             
-        except requests.exceptions.RequestException as e:
-            print(f"다운로드 중 오류 발생: {e}")
+        except Exception as e:
+            print(f"다운로드/압축해제 중 오류 발생: {e}")
             return False
     
-    def install_update(self, filename):
+    def install_update(self):
         """업데이트 설치"""
         try:
+            current_dir = os.path.dirname(sys.executable)
             current_exe = sys.executable
             
+            # 업데이트 스크립트 생성
             update_script = f"""
 @echo off
 timeout /t 2 /nobreak > nul
-copy /y "{filename}" "{current_exe}"
-del "{filename}"
+
+:: 현재 디렉토리의 이전 파일들 삭제 (exe 파일 제외)
+for %%i in ("{current_dir}\\*") do (
+    if not "%%~nxi"=="{os.path.basename(current_exe)}" (
+        if not "%%~nxi"=="update.bat" (
+            del "%%i" /q
+        )
+    )
+)
+
+:: 임시 디렉토리의 모든 파일을 현재 디렉토리로 복사
+xcopy "{self.temp_dir}\\*" "{current_dir}" /E /Y
+
+:: 임시 디렉토리 삭제
+rmdir "{self.temp_dir}" /S /Q
+
+:: 프로그램 재시작
 start "" "{current_exe}"
+
+:: 배치 파일 자신을 삭제
 del "%~f0"
             """
             
-            with open('update.bat', 'w') as f:
+            with open('update.bat', 'w', encoding='utf-8') as f:
                 f.write(update_script)
             
             subprocess.Popen(['start', 'update.bat'], shell=True)
