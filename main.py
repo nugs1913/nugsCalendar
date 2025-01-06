@@ -1,16 +1,21 @@
-import sys, os, json, calendar, requests, xmltodict, schedule, time, threading, sys
+import sys, os, json, calendar, time, sys
 from datetime import datetime, timedelta, date
-from PySide6.QtWidgets import QApplication, QWidget, QLabel, QLineEdit, QDateTimeEdit, QPushButton, QGridLayout, QVBoxLayout, QHBoxLayout, QSizePolicy
+from PySide6.QtWidgets import (QApplication, QWidget, QLabel, QLineEdit, 
+                               QDateTimeEdit, QPushButton, QGridLayout, QVBoxLayout, QHBoxLayout)
 from PySide6.QtCore import Qt, QTimer, QTime, QDateTime
-from PySide6.QtGui import QFont
-from functools import partial
+from PySide6.QtGui import QFont, QFontDatabase
 
+from functools import partial
 from enum import Enum
 from dataclasses import dataclass
 
 from win10toast import ToastNotifier
 from pystray import Icon, Menu, MenuItem
 from PIL import Image
+import win32com.client
+
+import subprocess, requests
+from packaging import version
 
 import logging
 
@@ -20,14 +25,92 @@ if os.path.exists('app.log'):
 logging.basicConfig(filename='app.log', level=logging.DEBUG,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
-logging.basicConfig(filename='error.log', level=logging.ERROR,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
-
 # Google API 관련 라이브러리
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
+
+class GitHubUpdater:
+    def __init__(self, owner, repo, current_version):
+        """
+        :param owner: GitHub 저장소 소유자 이름
+        :param repo: GitHub 저장소 이름
+        :param current_version: 현재 프로그램 버전 (예: "1.0.0")
+        """
+        self.owner = owner
+        self.repo = repo
+        self.current_version = current_version
+        self.github_api = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+        
+    def check_for_updates(self):
+        """최신 버전이 있는지 확인"""
+        try:
+            response = requests.get(self.github_api)
+            response.raise_for_status()
+            
+            latest_release = response.json()
+            latest_version = latest_release['tag_name'].lstrip('v')
+            
+            if version.parse(latest_version) > version.parse(self.current_version):
+                return latest_release
+            return None
+            
+        except requests.exceptions.RequestException as e:
+            print(f"업데이트 확인 중 오류 발생: {e}")
+            return None
+    
+    def download_update(self, asset_url, filename):
+        """업데이트 파일 다운로드"""
+        try:
+            response = requests.get(asset_url, stream=True)
+            response.raise_for_status()
+            
+            total_size = int(response.headers.get('content-length', 0))
+            block_size = 1024
+            downloaded = 0
+            
+            with open(filename, 'wb') as file:
+                for data in response.iter_content(block_size):
+                    file.write(data)
+                    downloaded += len(data)
+                    # 진행률 표시
+                    progress = int((downloaded / total_size) * 100)
+                    print(f"\r다운로드 진행률: {progress}%", end='')
+            
+            print("\n다운로드 완료!")
+            return True
+            
+        except requests.exceptions.RequestException as e:
+            print(f"다운로드 중 오류 발생: {e}")
+            return False
+    
+    def install_update(self, filename):
+        """업데이트 설치"""
+        try:
+            # 현재 실행 파일의 경로
+            current_exe = sys.executable
+            
+            # 업데이트 스크립트 생성
+            update_script = f"""
+@echo off
+timeout /t 2 /nobreak > nul
+copy /y "{filename}" "{current_exe}"
+del "{filename}"
+start "" "{current_exe}"
+del "%~f0"
+            """
+            
+            with open('update.bat', 'w') as f:
+                f.write(update_script)
+            
+            # 업데이트 스크립트 실행
+            subprocess.Popen(['start', 'update.bat'], shell=True)
+            sys.exit()
+            
+        except Exception as e:
+            print(f"설치 중 오류 발생: {e}")
+            return False
 
 class Public:
 
@@ -71,6 +154,33 @@ class Public:
         else:
             pass
 
+    def create_startup_shortcut():
+        # 현재 실행 중인 파이썬 스크립트의 전체 경로
+        script_path = os.path.abspath(sys.argv[0])
+        
+        # ProgramData 시작 메뉴 경로
+        startup_folder = f"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
+        
+        # 폴더가 존재하는지 확인
+        if not os.path.exists(startup_folder):
+            print(f"경로를 찾을 수 없습니다: {startup_folder}")
+            return
+        
+        # 바로가기 파일 이름 설정
+        shortcut_path = os.path.join(startup_folder, "nugsCalendar.lnk")
+        
+        # Windows Shell 객체 생성
+        shell = win32com.client.Dispatch("WScript.Shell")
+        
+        # 바로가기 생성
+        shortcut = shell.CreateShortCut(shortcut_path)
+        shortcut.TargetPath = script_path
+        shortcut.WorkingDirectory = os.path.dirname(script_path)
+        shortcut.Description = "nugs calendar Startup Shortcut"
+        shortcut.save()
+        
+        print(f"바로가기가 생성되었습니다: {shortcut_path}")
+
     def get_google_credentials(self):
         # OAuth 2.0 스코프 설정 (캘린더 읽기 권한)
         SCOPES = ['https://www.googleapis.com/auth/calendar']
@@ -107,6 +217,8 @@ class Public:
                     # 토큰 저장
                     with open('token.json', 'w') as token:
                         token.write(creds.to_json())
+
+                    self.create_startup_shortcut()
                 except Exception as e:
                     logging.error(f"Authentication error: {e}")
                     return None
@@ -218,6 +330,46 @@ class Public:
                     })
 
             return noti_dict
+
+        except Exception as e:
+            logging.error(f"Error fetching events: {e}")
+            return []
+
+    def get_holiday(self, start_date, end_date):
+        if not self.service:
+            # Google Calendar 인증 및 서비스 설정
+            self.creds = self.get_google_credentials()
+            
+            # Google Calendar 서비스 생성
+            if self.creds:
+                self.service = build('calendar', 'v3', credentials=self.creds)
+            else:
+                self.service = None
+
+        try:
+            events_result = self.service.events().list(
+                calendarId='ko.south_korea#holiday@group.v.calendar.google.com',
+                timeMin=start_date.isoformat() + 'Z',
+                timeMax=end_date.isoformat() + 'Z',
+                singleEvents=True,
+                orderBy='startTime',
+                fields='items(summary, start/date)'
+            ).execute()
+            events = events_result.get('items', [])
+
+            holiday_dict = {}
+            for event in events:
+                start = event.get('start', {}).get('date')
+
+                if start:
+                    event_date = start
+
+                    if event_date not in holiday_dict:
+                        holiday_dict[event_date] = ""
+
+                    holiday_dict[event_date] = event.get('summary')
+
+            return holiday_dict
 
         except Exception as e:
             logging.error(f"Error fetching events: {e}")
@@ -423,9 +575,14 @@ class Widget(QWidget):
         self.month = now.month
         self.cal = calendar.Calendar(calendar.MONDAY)
 
-        self.nomal = QFont('나눔스퀘어 네오', 11, QFont.Bold)
-        self.small = QFont('나눔스퀘어 네오', 9)
-        self.big = QFont('나눔스퀘어 네오', 20, QFont.Bold)
+        # .ttf 파일 로드
+        font_path = "./src/NanumSquareNeo-bRg.ttf"  # ttf 파일 경로
+        font_id = QFontDatabase.addApplicationFont(font_path)  # 글꼴 등록
+        font_family = QFontDatabase.applicationFontFamilies(font_id)[0]  # 글꼴 이름 가져오기
+
+        self.nomal = QFont(font_family, 11, QFont.Bold)
+        self.small = QFont(font_family, 9)
+        self.big = QFont(font_family, 20, QFont.Bold)
 
         self.set_theme(Theme(public.theme))
         self.initUI()
@@ -619,40 +776,45 @@ class Widget(QWidget):
         # 첫날의 요일 (0:월요일 ~ 6:일요일)
         weekday = -1 if first_day.weekday() == 6 else first_day.weekday()
 
-        try:
-            url = 'http://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo'
-            params ={'serviceKey' : 'FS3S0m+2dg9Sj8RC7nAmYT9mFoFhZL33RGaDdWBkVjjP9c4rpqIJqtRofnqpwo7J9GKEzsGiJm2nTqSpxBsaxw=='
-                    , 'solYear' : self.year
-                    , 'solMonth' : str(self.month).zfill(2) }
+        # try:
+        #     url = 'http://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo'
+        #     params ={'serviceKey' : 'FS3S0m+2dg9Sj8RC7nAmYT9mFoFhZL33RGaDdWBkVjjP9c4rpqIJqtRofnqpwo7J9GKEzsGiJm2nTqSpxBsaxw=='
+        #             , 'solYear' : self.year
+        #             , 'solMonth' : str(self.month).zfill(2) }
 
-            response = requests.get(url, params=params)
-            # 바이트 데이터를 UTF-8로 디코딩
-            decoded_xml = response.content.decode('utf-8')
+        #     response = requests.get(url, params=params)
+        #     # 바이트 데이터를 UTF-8로 디코딩
+        #     decoded_xml = response.content.decode('utf-8')
 
-            # XML을 Python 딕셔너리로 변환
-            xml_dict = xmltodict.parse(decoded_xml)
+        #     # XML을 Python 딕셔너리로 변환
+        #     xml_dict = xmltodict.parse(decoded_xml)
 
-            # dateName과 locdate를 추출하여 딕셔너리 생성
-            holiday_dict = {}
-            try:
-                items = xml_dict.get('response', {}).get('body', {}).get('items', {}).get('item', [])
-            except AttributeError:
-                items = []
+        #     # dateName과 locdate를 추출하여 딕셔너리 생성
+        #     holiday_dict = {}
+        #     try:
+        #         items = xml_dict.get('response', {}).get('body', {}).get('items', {}).get('item', [])
+        #     except AttributeError:
+        #         items = []
 
-            # items가 리스트가 아닌 경우 리스트로 변환
-            if isinstance(items, dict):
-                items = [items]
-        except Exception as e:
-            logging.error(f'Error in load holiday: {e}')
+        #     # items가 리스트가 아닌 경우 리스트로 변환
+        #     if isinstance(items, dict):
+        #         items = [items]
+        # except Exception as e:
+        #     logging.error(f'Error in load holiday: {e}')
 
-        for item in items:
-            locdate = item.get('locdate')
-            dateName = item.get('dateName')
-            if locdate and dateName:
-                holiday_dict[locdate] = dateName
+        # for item in items:
+        #     locdate = item.get('locdate')
+        #     dateName = item.get('dateName')
+        #     if locdate and dateName:
+        #         holiday_dict[locdate] = dateName 휴일 구글에서 가져오고 있음 나중에 음력 넣고 싶으면 사용
 
         # 날짜 범위를 사용하여 이벤트 가져오기
         self.event_dict = public.get_calendar_events(
+            datetime.combine(first_day, datetime.min.time()),
+            datetime.combine(last_day, datetime.max.time())
+        )
+
+        holiday_dict = public.get_holiday(
             datetime.combine(first_day, datetime.min.time()),
             datetime.combine(last_day, datetime.max.time())
         )
@@ -687,13 +849,13 @@ class Widget(QWidget):
                         day.label.setProperty('class', 'dayTitle')
 
                 # 해당 날짜가 휴일인 경우 sundayTitle 스타일 적용
-                if current_date.replace('-', '') in holiday_dict:
+                if current_date in holiday_dict:
                     if today == current_date:
                         day.label.setProperty('class', 'tSundayTitle')
                     else:
                         day.label.setProperty('class', 'sundayTitle')
 
-                    day.holidayLabel.setText(holiday_dict[current_date.replace('-', '')])
+                    day.holidayLabel.setText(holiday_dict[current_date])
 
                 # 해당 날짜의 이벤트 가져오기
                 events = self.event_dict.get(current_date, [])
@@ -1027,7 +1189,7 @@ class Tray:
         self.toaster.show_toast(
             title="Nugs Calendar", 
             msg=text, 
-            icon_path='icon.ico', 
+            icon_path='./src/icon.ico', 
             duration=0, 
             threaded=True
             )
@@ -1109,7 +1271,7 @@ class Tray:
         self.send_notification(content)
 
     def create_image(self):
-        image = Image.open('icon.ico')
+        image = Image.open('./src/icon.ico')
         return image
 
     def tray_run(self):
