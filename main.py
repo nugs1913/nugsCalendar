@@ -184,8 +184,8 @@ class Public:
         self.toggle = False
         self.x = 100
         self.y = 100
-        self.width = 940
-        self.height = 940
+        self.width = 900
+        self.height = 900
         self.theme = 'light'
 
         self.auto_sync = True
@@ -198,12 +198,12 @@ class Public:
             try:
                 with open('config.json', 'r') as f:
                     config = json.load(f)
-                    self.x = config.get('x', 100)
-                    self.y = config.get('y', 100)
-                    self.width = config.get('width', 500)
-                    self.height = config.get('height', 500)
-                    self.theme = config.get('theme', 'dark')
-                    self.version = config.get('version', '1.0.0')
+                    self.x = config.get('x')
+                    self.y = config.get('y')
+                    self.width = config.get('width')
+                    self.height = config.get('height')
+                    self.theme = config.get('theme')
+                    self.version = config.get('version')
 
             except json.JSONDecodeError:
                 logging.error('Error in load config')
@@ -411,7 +411,7 @@ class Public:
                 timeMax=end_date.isoformat() + 'Z',
                 singleEvents=True,
                 orderBy='startTime',
-                fields='items(summary, start/date)'
+                fields='items(summary, start/date, description)'
             ).execute()
             events = events_result.get('items', [])
 
@@ -423,9 +423,12 @@ class Public:
                     event_date = start
 
                     if event_date not in holiday_dict:
-                        holiday_dict[event_date] = ""
+                        holiday_dict[event_date] = {}
 
-                    holiday_dict[event_date] = event.get('summary')
+                    holiday_dict[event_date] = {
+                        'summary': event.get('summary'),
+                        'description': event.get('description')
+                    }   
 
             return holiday_dict
 
@@ -610,6 +613,10 @@ class ThemeManager:
                 .holidayLabel {{
                     color: red;
                 }}
+
+                .anniversaryLabel {{
+                    color: #32CD32;
+                }}
             """.format(**colors)
 
     def add_custom_theme(self, color_scheme: ColorScheme):
@@ -623,8 +630,8 @@ class Widget(QWidget):
         self.config_file = 'config.json'
         self.click_count = 0
         self.moving = False
-        self.x = None
-        self.y = None
+        self.x = public.x
+        self.y = public.y
 
         self.detailFrame = None
 
@@ -656,8 +663,8 @@ class Widget(QWidget):
         config = {
             'x': x,
             'y': y,
-            'width': self.width(),
-            'height': self.height(),
+            'width': public.width,
+            'height': public.height,
             'theme': self.theme_manager.current_theme.value,
             'version': public.version
         }
@@ -695,7 +702,7 @@ class Widget(QWidget):
             grid.setColumnStretch(column, 1)  # 모든 열에 동일한 stretch factor 적용
 
         # 모든 행의 높이를 동일하게 설정
-        cell_height = 120  # 원하는 셀 높이
+        cell_height = 130  # 원하는 셀 높이
         for row in range(1, 7):  # 1부터 시작하는 이유는 첫 번째 행이 요일 표시 줄일 경우
             grid.setRowMinimumHeight(row, cell_height)
             grid.setRowStretch(row, 1)  # 모든 행에 동일한 stretch factor 적용
@@ -909,12 +916,18 @@ class Widget(QWidget):
 
                 # 해당 날짜가 휴일인 경우 sundayTitle 스타일 적용
                 if current_date in holiday_dict:
-                    if today == current_date:
-                        day.label.setProperty('class', 'tSundayTitle')
-                    else:
-                        day.label.setProperty('class', 'sundayTitle')
+                    if holiday_dict[current_date].get('description') == '공휴일':
+                        if today == current_date:
+                            day.label.setProperty('class', 'tSundayTitle')
+                        else:
+                            day.label.setProperty('class', 'sundayTitle')
 
-                    day.holidayLabel.setText(holiday_dict[current_date])
+                        day.holidayLabel.setProperty('class', 'holidayLabel')
+                    
+                    else:
+                        day.holidayLabel.setProperty('class', 'anniversaryLabel')
+
+                    day.holidayLabel.setText(holiday_dict[current_date].get('summary'))
 
                 # 해당 날짜의 이벤트 가져오기
                 events = self.event_dict.get(current_date, [])
@@ -929,6 +942,10 @@ class Widget(QWidget):
                 day.label.style().unpolish(day.label)
                 day.label.style().polish(day.label)
                 day.label.update()
+
+                day.holidayLabel.style().unpolish(day.holidayLabel)
+                day.holidayLabel.style().polish(day.holidayLabel)
+                day.holidayLabel.update()
 
     def show_detail(self, e, label):
 
@@ -1206,8 +1223,8 @@ class Widget(QWidget):
             config = {
                 'x': x,
                 'y': y,
-                'width': self.width(),
-                'height': self.height(),
+                'width': public.width,
+                'height': public.height,
                 'theme': self.theme_manager.current_theme.value,
                 'version': public.version
             }
@@ -1218,8 +1235,8 @@ class Widget(QWidget):
         # 현재 창 위치와 크기 저장
         x = self.pos().x()
         y = self.pos().y()
-        width = self.width()
-        height = self.height()
+        width = public.width
+        height = public.height
         version = public.version
         
         # JSON 파일로 저장
@@ -1388,8 +1405,8 @@ def save_version(version):
     config = {
         'x': window.x,
         'y': window.y,
-        'width': window.width(),
-        'height': window.height(),
+        'width': public.width,
+        'height': public.height,
         'theme': public.theme,
         'version': version
     }
@@ -1401,8 +1418,6 @@ if __name__ == '__main__':
     public = Public()
     window = Widget()
     tray = Tray()
-
-    public.create_startup_shortcut()
 
     updater = GitHubUpdater(public.version, parent=window)
 
@@ -1422,6 +1437,8 @@ if __name__ == '__main__':
         print("현재 최신 버전을 사용 중입니다.")
 
     window.show()
+
+    save_version(public.version)
 
     if public.auto_sync:
         auto_sync = QTimer()
