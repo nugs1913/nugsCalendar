@@ -1,7 +1,9 @@
 import sys, os, json, calendar, time, sys
 from datetime import datetime, timedelta, date
 from PySide6.QtWidgets import (QApplication, QWidget, QLabel, QLineEdit, 
-                               QDateTimeEdit, QPushButton, QGridLayout, QVBoxLayout, QHBoxLayout)
+                               QDateTimeEdit, QPushButton, QGridLayout, 
+                               QVBoxLayout, QHBoxLayout, QProgressDialog, 
+                               QMessageBox)
 from PySide6.QtCore import Qt, QTimer, QTime, QDateTime
 from PySide6.QtGui import QFont, QFontDatabase
 
@@ -13,6 +15,7 @@ from win10toast import ToastNotifier
 from pystray import Icon, Menu, MenuItem
 from PIL import Image
 import win32com.client
+from win32com.client import Dispatch
 
 import subprocess, requests, zipfile, shutil
 from packaging import version
@@ -39,18 +42,18 @@ import sys
 from packaging import version
 
 class GitHubUpdater:
-    def __init__(self, current_version):
+    def __init__(self, current_version, parent=None):
         self.owner = 'nugs1913'
         self.repo = 'nugsCalendar'
         self.current_version = current_version
         self.github_api = f"https://api.github.com/repos/{self.owner}/{self.repo}/releases/latest"
         self.headers = {
-            'Authorization': f'token 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',
+            'Authorization': 'token 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',
             'Accept': 'application/vnd.github.v3+json'
         }
-        # 임시 디렉토리 설정
         self.temp_dir = "temp_update"
-        
+        self.parent = parent  # PySide6 위젯과 연결
+
     def check_for_updates(self):
         try:
             response = requests.get(self.github_api, headers=self.headers)
@@ -62,49 +65,65 @@ class GitHubUpdater:
             if version.parse(latest_version) > version.parse(self.current_version):
                 return latest_release
             return None
-            
         except requests.exceptions.RequestException as e:
             print(f"업데이트 확인 중 오류 발생: {e}")
             return None
-    
+
     def download_and_extract_update(self, asset_url, zip_filename):
-        """ZIP 파일 다운로드 및 압축 해제"""
         try:
-            # 임시 디렉토리 생성
             if os.path.exists(self.temp_dir):
                 shutil.rmtree(self.temp_dir)
             os.makedirs(self.temp_dir)
-            
-            # ZIP 파일 다운로드
-            zip_path = os.path.join(self.temp_dir, zip_filename)
-            response = requests.get(asset_url, headers=self.headers, stream=True)
+
+            # 진행 상황 창 생성
+            progress = QProgressDialog("업데이트 다운로드 중...", "취소", 0, 100, self.parent)
+            progress.setWindowTitle("업데이트 진행")
+            progress.setWindowModality(Qt.WindowModal)
+            progress.show()
+
+            headers = self.headers.copy()
+            headers['Accept'] = 'application/octet-stream'
+
+            response = requests.get(asset_url, headers=headers, stream=True)
             response.raise_for_status()
-            
+
+            zip_path = os.path.join(self.temp_dir, zip_filename)
             total_size = int(response.headers.get('content-length', 0))
-            block_size = 1024
             downloaded = 0
-            
-            print("ZIP 파일 다운로드 중...")
+
             with open(zip_path, 'wb') as file:
-                for data in response.iter_content(block_size):
+                for data in response.iter_content(1024):
                     file.write(data)
                     downloaded += len(data)
-                    progress = int((downloaded / total_size) * 100)
-                    print(f"\r다운로드 진행률: {progress}%", end='')
-            
-            print("\nZIP 파일 압축 해제 중...")
+                    if total_size > 0:
+                        progress.setValue(int((downloaded / total_size) * 100))
+                        QApplication.processEvents()  # UI 업데이트
+
+                    # 취소 버튼이 눌리면 다운로드 중단
+                    if progress.wasCanceled():
+                        raise Exception("다운로드가 취소되었습니다.")
+
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(self.temp_dir)
-            
-            # ZIP 파일 삭제
+
             os.remove(zip_path)
-            
+            progress.setValue(100)
+            progress.close()
             return True
-            
+
         except Exception as e:
-            print(f"다운로드/압축해제 중 오류 발생: {e}")
+            print(f"[오류] 다운로드/압축해제 중 예외 발생: {e}")
             return False
-    
+
+    def install_update(self):
+        try:
+            # 업데이트 설치 코드는 기존과 동일
+            pass
+        except Exception as e:
+            print(f"설치 중 오류 발생: {e}")
+            return False
+
+
     def install_update(self):
         """업데이트 설치"""
         try:
@@ -191,12 +210,12 @@ class Public:
         else:
             pass
 
-    def create_startup_shortcut():
+    def create_startup_shortcut(self):
         # 현재 실행 중인 파이썬 스크립트의 전체 경로
         script_path = os.path.abspath(sys.argv[0])
         
-        # ProgramData 시작 메뉴 경로
-        startup_folder = f"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
+        # 현재 사용자의 시작프로그램 폴더 사용
+        startup_folder = os.path.join(os.getenv('APPDATA'), f'Microsoft\Windows\Start Menu\Programs\Startup')
         
         # 폴더가 존재하는지 확인
         if not os.path.exists(startup_folder):
@@ -209,11 +228,13 @@ class Public:
         # Windows Shell 객체 생성
         shell = win32com.client.Dispatch("WScript.Shell")
         
-        # 바로가기 생성
+        # 바로가기 파일 이름 설정
+        shortcut_path = os.path.join(startup_folder, "nugsCalendar.lnk")
+        
+        shell = Dispatch("WScript.Shell")
         shortcut = shell.CreateShortCut(shortcut_path)
         shortcut.TargetPath = script_path
         shortcut.WorkingDirectory = os.path.dirname(script_path)
-        shortcut.Description = "nugs calendar Startup Shortcut"
         shortcut.save()
         
         print(f"바로가기가 생성되었습니다: {shortcut_path}")
@@ -283,7 +304,7 @@ class Public:
                     timeMax=end_date.isoformat() + 'Z',
                     singleEvents=True,
                     orderBy='startTime',
-                    fields='items(id,summary,start/dateTime,end/dateTime, start/date, end/date)'
+                    fields='items(id, summary, location, start/dateTime, end/dateTime, start/date, end/date)'
                 ).execute()
                 events = events_result.get('items', [])
             
@@ -637,7 +658,8 @@ class Widget(QWidget):
             'y': y,
             'width': self.width(),
             'height': self.height(),
-            'theme': self.theme_manager.current_theme.value
+            'theme': self.theme_manager.current_theme.value,
+            'version': public.version
         }
         with open(self.config_file, 'w') as f:
             json.dump(config, f)
@@ -1049,11 +1071,37 @@ class Widget(QWidget):
         inputEnd.setDateTime(datetime.strptime(current_date, '%Y-%m-%d') + timedelta(hours=1))
         inputEnd.setFixedWidth(220)
 
+        inputLocationLayout = QHBoxLayout()
+        inputLocationLayout.setContentsMargins(0, 0, 0, 0)
+        inputLocationLayout.setSpacing(10)
+
+        inputLocationContainer = QWidget(self.detailFrame)
+        inputLocationContainer.setLayout(inputLocationLayout)
+        inputLocationContainer.setFixedHeight(30)
+        detailLayout.addWidget(inputLocationContainer)
+
+        inputLocationLabel = QLabel('장소', self.detailFrame)
+        inputLocationLayout.addWidget(inputLocationLabel)
+        inputLocationLabel.setProperty('class', 'detailLabel')
+        inputLocationLabel.setFont(self.small)
+        inputLocationLabel.setFixedWidth(50)
+
+        inputLocation = QLineEdit(self.detailFrame)
+        inputLocationLayout.addWidget(inputLocation)
+        inputLocation.setFont(self.small)
+        inputLocation.setPlaceholderText('장소를 입력하세요')
+        inputLocation.setFixedWidth(220)
+
         addBtn = QPushButton('추가', self.detailFrame)
         detailLayout.addWidget(addBtn)
         addBtn.setFont(self.small)
-        addBtn.clicked.connect(lambda: self.add_event(str(inputContent.text()), inputStart.dateTime(), inputEnd.dateTime(), label))
-
+        addBtn.clicked.connect(lambda: self.add_event(
+            str(inputContent.text()), 
+            inputStart.dateTime(), 
+            inputEnd.dateTime(), 
+            str(inputLocation.text()), 
+            label
+        ))
         exitBtn = QLabel('X', self.detailFrame)
         exitBtn.setGeometry(274, 3, 25, 25)
         exitBtn.setProperty('class', 'exitBtn')
@@ -1070,12 +1118,13 @@ class Widget(QWidget):
         widget.deleteLater()
         self.detailFrame = None
 
-    def add_event(self, summary, start, end, label):
+    def add_event(self, summary, start, end, location, label):
         if not public.service:
             return
 
         event = {
             'summary': summary,
+            'location': location,
             'start': {
                 'dateTime': start.toString(Qt.ISODate),
                 'timeZone': 'Asia/Seoul'
@@ -1159,7 +1208,8 @@ class Widget(QWidget):
                 'y': y,
                 'width': self.width(),
                 'height': self.height(),
-                'theme': self.theme_manager.current_theme.value
+                'theme': self.theme_manager.current_theme.value,
+                'version': public.version
             }
             with open(self.config_file, 'w') as f:
                 json.dump(config, f)
@@ -1170,6 +1220,7 @@ class Widget(QWidget):
         y = self.pos().y()
         width = self.width()
         height = self.height()
+        version = public.version
         
         # JSON 파일로 저장
         config = {
@@ -1177,7 +1228,8 @@ class Widget(QWidget):
             'y': y,
             'width': width,
             'height': height,
-            'theme': self.theme_manager.current_theme.value
+            'theme': self.theme_manager.current_theme.value,
+            'version': version
         }
         
         with open(self.config_file, 'w') as f:
@@ -1331,29 +1383,41 @@ def start_timers():
     next_midnight = QDateTime.currentDateTime().addDays(1).toMSecsSinceEpoch() // 86400000 * 86400000
     QTimer.singleShot(next_midnight - QDateTime.currentMSecsSinceEpoch(), schedule_set_calendar)
 
+def save_version(version):
+
+    config = {
+        'x': window.x,
+        'y': window.y,
+        'width': window.width(),
+        'height': window.height(),
+        'theme': public.theme,
+        'version': version
+    }
+    with open(window.config_file, 'w') as f:
+        json.dump(config, f)
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     public = Public()
     window = Widget()
     tray = Tray()
 
-    updater = GitHubUpdater(public.version)
+    public.create_startup_shortcut()
 
-    # 업데이트 확인
+    updater = GitHubUpdater(public.version, parent=window)
+
     print("업데이트 확인 중...")
     release = updater.check_for_updates()
     if release:
-        print(f"새로운 버전이 있습니다! (현재: {config['version']}, 최신: {release['tag_name']})")
-        print(f"변경사항: {release['body']}")
-        
-        if release['assets']:
-            asset = release['assets'][0]
-            print(f"\n{asset['name']} 다운로드 중...")
-            
-            if updater.download_update(asset['browser_download_url'], asset['name']):
-                print("업데이트 설치 중...")
-                save_version(release['tag_name'].lstrip('v'))
-                updater.install_update(asset['name'])
+        # 새로운 창에서 진행 상황 표시
+        QMessageBox.information(window, "업데이트 확인", "새로운 업데이트가 있습니다!")
+        asset = release['assets'][0]  # 첫 번째 자산 선택
+        if asset['name'].endswith('.zip'):
+            if updater.download_and_extract_update(asset['url'], asset['name']):
+                QMessageBox.information(window, "업데이트 완료", "다운로드 및 압축 해제가 완료되었습니다.\n재시작 후 적용됩니다.")
+                updater.install_update()
+        else:
+            QMessageBox.warning(window, "오류", "다운로드 가능한 자산이 없습니다.")
     else:
         print("현재 최신 버전을 사용 중입니다.")
 
