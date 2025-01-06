@@ -31,22 +31,34 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 
+import os
+import json
+import requests
+import subprocess
+import sys
+from packaging import version
+
 class GitHubUpdater:
-    def __init__(self, owner, repo, current_version):
+    def __init__(self, current_version):
         """
         :param owner: GitHub 저장소 소유자 이름
         :param repo: GitHub 저장소 이름
         :param current_version: 현재 프로그램 버전 (예: "1.0.0")
+        :param access_token: GitHub 개인 액세스 토큰
         """
-        self.owner = owner
-        self.repo = repo
+        owner = 'nugs1913'
+        repo = 'nugsCalendar'
         self.current_version = current_version
         self.github_api = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+        self.headers = {
+            'Authorization': f'token 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',
+            'Accept': 'application/vnd.github.v3+json'
+        }
         
     def check_for_updates(self):
         """최신 버전이 있는지 확인"""
         try:
-            response = requests.get(self.github_api)
+            response = requests.get(self.github_api, headers=self.headers)
             response.raise_for_status()
             
             latest_release = response.json()
@@ -63,7 +75,11 @@ class GitHubUpdater:
     def download_update(self, asset_url, filename):
         """업데이트 파일 다운로드"""
         try:
-            response = requests.get(asset_url, stream=True)
+            response = requests.get(
+                asset_url, 
+                headers=self.headers,
+                stream=True
+            )
             response.raise_for_status()
             
             total_size = int(response.headers.get('content-length', 0))
@@ -74,7 +90,6 @@ class GitHubUpdater:
                 for data in response.iter_content(block_size):
                     file.write(data)
                     downloaded += len(data)
-                    # 진행률 표시
                     progress = int((downloaded / total_size) * 100)
                     print(f"\r다운로드 진행률: {progress}%", end='')
             
@@ -88,10 +103,8 @@ class GitHubUpdater:
     def install_update(self, filename):
         """업데이트 설치"""
         try:
-            # 현재 실행 파일의 경로
             current_exe = sys.executable
             
-            # 업데이트 스크립트 생성
             update_script = f"""
 @echo off
 timeout /t 2 /nobreak > nul
@@ -104,7 +117,6 @@ del "%~f0"
             with open('update.bat', 'w') as f:
                 f.write(update_script)
             
-            # 업데이트 스크립트 실행
             subprocess.Popen(['start', 'update.bat'], shell=True)
             sys.exit()
             
@@ -148,6 +160,7 @@ class Public:
                     self.width = config.get('width', 500)
                     self.height = config.get('height', 500)
                     self.theme = config.get('theme', 'dark')
+                    self.version = config.get('version', '1.0.0')
 
             except json.JSONDecodeError:
                 logging.error('Error in load config')
@@ -1299,6 +1312,26 @@ if __name__ == '__main__':
     public = Public()
     window = Widget()
     tray = Tray()
+
+    updater = GitHubUpdater(public.version)
+
+    # 업데이트 확인
+    print("업데이트 확인 중...")
+    release = updater.check_for_updates()
+    if release:
+        print(f"새로운 버전이 있습니다! (현재: {config['version']}, 최신: {release['tag_name']})")
+        print(f"변경사항: {release['body']}")
+        
+        if release['assets']:
+            asset = release['assets'][0]
+            print(f"\n{asset['name']} 다운로드 중...")
+            
+            if updater.download_update(asset['browser_download_url'], asset['name']):
+                print("업데이트 설치 중...")
+                save_version(release['tag_name'].lstrip('v'))
+                updater.install_update(asset['name'])
+    else:
+        print("현재 최신 버전을 사용 중입니다.")
 
     window.show()
 
