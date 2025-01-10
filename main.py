@@ -63,11 +63,11 @@ class GitHubUpdater:
             latest_version = latest_release['tag_name'].lstrip('v')
             
             if version.parse(latest_version) > version.parse(self.current_version):
-                return latest_release
-            return None
+                return latest_release, latest_version
+            return None, None
         except requests.exceptions.RequestException as e:
             print(f"업데이트 확인 중 오류 발생: {e}")
-            return None
+            return None, None
 
     def download_and_extract_update(self, asset_url, zip_filename):
         try:
@@ -116,31 +116,20 @@ class GitHubUpdater:
             return False
 
     def install_update(self):
-        try:
-            # 업데이트 설치 코드는 기존과 동일
-            pass
-        except Exception as e:
-            print(f"설치 중 오류 발생: {e}")
-            return False
-
-
-    def install_update(self):
         """업데이트 설치"""
         try:
             current_dir = os.path.dirname(sys.executable)
-            current_exe = sys.executable
+            current_exe = 'nugsCalendar.exe'
             
             # 업데이트 스크립트 생성
             update_script = f"""
 @echo off
 timeout /t 2 /nobreak > nul
 
-:: 현재 디렉토리의 이전 파일들 삭제 (exe 파일 제외)
+:: 현재 디렉토리의 모든 파일 삭제
 for %%i in ("{current_dir}\\*") do (
-    if not "%%~nxi"=="{os.path.basename(current_exe)}" (
-        if not "%%~nxi"=="update.bat" (
-            del "%%i" /q
-        )
+    if not "%%~nxi"=="update.bat" (
+        del "%%i" /q
     )
 )
 
@@ -155,12 +144,20 @@ start "" "{current_exe}"
 
 :: 배치 파일 자신을 삭제
 del "%~f0"
-            """
+exit
+"""
             
             with open('update.bat', 'w', encoding='utf-8') as f:
                 f.write(update_script)
             
-            subprocess.Popen(['start', 'update.bat'], shell=True)
+            # 배치 파일을 숨김 모드로 실행
+            subprocess.Popen(
+                ['cmd', '/c', 'update.bat'],
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            # 업데이트 후 새로운 버전 저장
+            save_version(new_version)
+
             sys.exit()
             
         except Exception as e:
@@ -204,7 +201,6 @@ class Public:
                     self.height = config.get('height')
                     self.theme = config.get('theme')
                     self.version = config.get('version')
-
             except json.JSONDecodeError:
                 logging.error('Error in load config')
         else:
@@ -1314,6 +1310,7 @@ class Widget(QWidget):
                 'theme': self.theme_manager.current_theme.value,
                 'version': public.version
             }
+
             with open(self.config_file, 'w') as f:
                 json.dump(config, f)
 
@@ -1334,6 +1331,7 @@ class Widget(QWidget):
             'theme': self.theme_manager.current_theme.value,
             'version': version
         }
+
         
         with open(self.config_file, 'w') as f:
             json.dump(config, f)
@@ -1496,6 +1494,9 @@ def save_version(version):
         'theme': public.theme,
         'version': version
     }
+
+    public.version = version
+
     with open(window.config_file, 'w') as f:
         json.dump(config, f)
 
@@ -1508,7 +1509,7 @@ if __name__ == '__main__':
     updater = GitHubUpdater(public.version, parent=window)
 
     print("업데이트 확인 중...")
-    release = updater.check_for_updates()
+    release, new_version = updater.check_for_updates()
     if release:
         # 새로운 창에서 진행 상황 표시
         QMessageBox.information(window, "업데이트 확인", "새로운 업데이트가 있습니다!")
@@ -1521,10 +1522,8 @@ if __name__ == '__main__':
             QMessageBox.warning(window, "오류", "다운로드 가능한 자산이 없습니다.")
     else:
         print("현재 최신 버전을 사용 중입니다.")
-
+    
     window.show()
-
-    save_version(public.version)
 
     if public.auto_sync:
         auto_sync = QTimer()
