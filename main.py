@@ -312,6 +312,7 @@ class Public:
                 for event in events:
                     start = event.get('start', {}).get('dateTime') if event.get('start', {}).get('dateTime') else event.get('start', {}).get('date')
                     end = event.get('end', {}).get('dateTime') if event.get('end', {}).get('dateTime') else event.get('start', {}).get('date')
+                    location = event.get('location', {}) if event.get('location', {}) else ''
 
                     if start and end:
                         if datetime.fromisoformat(start).date() != datetime.fromisoformat(end).date():
@@ -323,7 +324,8 @@ class Public:
                                     "id": event.get('id'),
                                     "summary": event.get('summary'),
                                     "start": datetime.fromisoformat(start).date().isoformat(),
-                                    "end": datetime.fromisoformat(end).date().isoformat()
+                                    "end": datetime.fromisoformat(end).date().isoformat(),
+                                    "location": location
                                 })
                         else:
                             event_date = datetime.fromisoformat(start).date().isoformat()
@@ -334,7 +336,8 @@ class Public:
                                 "id": event.get('id'),
                                 "summary": event.get('summary'), 
                                 "start": datetime.fromisoformat(start).time().isoformat(), 
-                                "end": datetime.fromisoformat(end).time().isoformat()
+                                "end": datetime.fromisoformat(end).time().isoformat(),
+                                "location": location
                             })
 
                 return event_dict
@@ -540,6 +543,11 @@ class ThemeManager:
                     border: 1px solid {gray};
                 }}
 
+                .borderBottom {{
+                    border-bottom: 1px solid {gray};
+                    padding-bottom: 2px;
+                }}
+
                 /* 버튼 스타일 */
                 .titleBtn {{
                     background-color: rgba(0, 0, 0, 0);
@@ -645,9 +653,10 @@ class Widget(QWidget):
         font_id = QFontDatabase.addApplicationFont(font_path)  # 글꼴 등록
         font_family = QFontDatabase.applicationFontFamilies(font_id)[0]  # 글꼴 이름 가져오기
 
-        self.nomal = QFont(font_family, 11, QFont.Bold)
-        self.small = QFont(font_family, 9)
         self.big = QFont(font_family, 20, QFont.Bold)
+        self.nomal = QFont(font_family, 12, QFont.Bold)
+        self.small = QFont(font_family, 10)
+        self.smaller = QFont(font_family, 8)
 
         self.set_theme(Theme(public.theme))
         self.initUI()
@@ -965,14 +974,14 @@ class Widget(QWidget):
 
         detailLayout = QVBoxLayout()
         detailLayout.setContentsMargins(10, 20, 10, 0)  # 레이아웃 여백 제거
-        detailLayout.setSpacing(0)
+        detailLayout.setSpacing(5)
         detailLayout.setAlignment(Qt.AlignTop)
         self.detailFrame.setLayout(detailLayout)
 
         current_date = date(self.year, self.month, int(label.text())).isoformat()
         events = self.event_dict.get(current_date, [])
 
-        event_texts = [f"{event['summary']} ({event['start']} ~ {event['end']})" for event in events]
+        event_texts = [f"{event['summary']}|{event['start']} ~ {event['end']}|{event['location']}" for event in events]
         
         dateLabel = QLabel(f'{current_date}', self.detailFrame) #날짜 표시
         detailLayout.addWidget(dateLabel)
@@ -987,30 +996,48 @@ class Widget(QWidget):
 
         idx = -1
         for idx, text in enumerate(event_texts):           
-            contentLayout = QHBoxLayout()
-            contentLayout.setContentsMargins(0, 0, 0, 0)
-            contentLayout.setSpacing(10)
+            listLayout = QHBoxLayout()
+            listLayout.setContentsMargins(0, 0, 0, 0)
+            listLayout.setSpacing(10)
 
             container = QWidget(self.detailFrame)
-            container.setLayout(contentLayout)
-            container.setFixedHeight(30)
+            container.setLayout(listLayout)
+            container.setFixedHeight(33)
+            container.setProperty('class', 'borderBottom')
             detailLayout.addWidget(container)
 
-            contentLabel = QLabel(text, self.detailFrame) #일정 내용
+            contentLayout = QVBoxLayout()
+            contentLayout.setContentsMargins(0, 0, 0, 0)
+            contentLayout.setSpacing(1)
+
+            content = QWidget(self.detailFrame)
+            content.setLayout(contentLayout)
+            content.setFixedHeight(30)
+            content.setCursor(Qt.PointingHandCursor)
+            content.mousePressEvent = partial(self.show_event, event=text)
+            listLayout.addWidget(content)
+
+            contentLabel = QLabel(text.split("|")[0], self.detailFrame) #일정 내용
             contentLabel.setProperty('class', 'detailLabel')
             contentLabel.setFont(self.small)
             contentLabel.setWordWrap(True)
-            contentLabel.setText(text)
             contentLabel.setFixedWidth(220)  # 라벨 너비 고정
+
+            contentTime = QLabel(text.split("|")[1], self.detailFrame)
+            contentTime.setProperty('class', 'detailLabel')
+            contentTime.setFont(self.smaller)
+            contentTime.setWordWrap(True)
+            contentTime.setFixedWidth(220)  # 라벨 너비 고정
 
             deleteBtn = QPushButton('삭제', self.detailFrame)
             deleteBtn.setFont(self.small)
             deleteBtn.clicked.connect(partial(self.delete_event, events[idx]['id'], label))
             deleteBtn.setCursor(Qt.PointingHandCursor)
-            deleteBtn.setFixedWidth(50)  # 버튼 너비 고정
+            deleteBtn.setFixedSize(50, 30)  # 버튼 너비 고정
 
             contentLayout.addWidget(contentLabel)
-            contentLayout.addWidget(deleteBtn)
+            contentLayout.addWidget(contentTime)
+            listLayout.addWidget(deleteBtn)
         
         if idx > -1:
             blank = QLabel('', self.detailFrame)
@@ -1127,6 +1154,40 @@ class Widget(QWidget):
         exitBtn.mousePressEvent = partial(self.detail_close, widget=self.detailFrame)
         exitBtn.setCursor(Qt.PointingHandCursor)
 
+        self.contentFrame = QWidget(self.detailFrame)
+        self.contentFrame.setGeometry(0, 0, 300, 500)
+        self.contentFrame.setProperty('class', 'detailFrame')
+
+        self.contentDetailLayout = QVBoxLayout()
+        self.contentDetailLayout.setContentsMargins(10, 20, 10, 0)
+        self.contentDetailLayout.setSpacing(5)
+        self.contentDetailLayout.setAlignment(Qt.AlignTop)
+
+        self.contentFrame.setLayout(self.contentDetailLayout)
+
+        current_date = date(self.year, self.month, int(label.text())).isoformat()
+
+        dateLabel2 = QLabel(f'{current_date}', self.contentFrame) #날짜 표시
+        self.contentDetailLayout.addWidget(dateLabel2)
+        dateLabel2.setProperty('class', 'innerLabel')
+        dateLabel2.setFont(self.nomal)
+        dateLabel2.setAlignment(Qt.AlignCenter)
+        dateLabel2.setFixedHeight(30)
+
+        blank2 = QLabel('', self.contentFrame)
+        blank2.setFixedHeight(30)
+        self.contentDetailLayout.addWidget(blank2)
+
+        exitBtn = QLabel('X', self.contentFrame)
+        exitBtn.setGeometry(274, 3, 25, 25)
+        exitBtn.setProperty('class', 'exitBtn')
+        exitBtn.setAlignment(Qt.AlignCenter)
+        exitBtn.setFont(self.nomal)
+        exitBtn.mousePressEvent = partial(self.event_close)
+        exitBtn.setCursor(Qt.PointingHandCursor)
+
+        self.contentFrame.setVisible(False)
+
         # 프레임을 최상단으로 올리기
         self.detailFrame.raise_()
         self.detailFrame.show()
@@ -1134,6 +1195,31 @@ class Widget(QWidget):
     def detail_close(self, e, widget):
         widget.deleteLater()
         self.detailFrame = None
+
+    def show_event(self, e, event):
+        self.contentFrame.setVisible(True)
+
+        summary = QLabel("일정 : " + event.split("|")[0], self.contentFrame)
+        self.contentDetailLayout.addWidget(summary)
+        summary.setFixedHeight(40)
+        summary.setProperty('class', 'borderBottom')
+        summary.setFont(self.nomal)
+
+        time = QLabel("시간 : " + event.split("|")[1], self.contentFrame)
+        self.contentDetailLayout.addWidget(time)
+        time.setProperty('class', 'borderBottom')
+        time.setFixedHeight(40)
+        time.setFont(self.nomal)
+
+        if event.split("|")[2]:
+            location = QLabel("장소 : " + event.split("|")[2], self.contentFrame)
+            self.contentDetailLayout.addWidget(location)
+            location.setProperty('class', 'borderBottom')
+            location.setFixedHeight(40)
+            location.setFont(self.nomal)
+
+    def event_close(self, e):
+        self.contentFrame.setVisible(False)
 
     def add_event(self, summary, start, end, location, label):
         if not public.service:
