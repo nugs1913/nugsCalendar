@@ -200,11 +200,25 @@ class Public:
                     self.width = config.get('width')
                     self.height = config.get('height')
                     self.theme = config.get('theme')
-                    self.version = config.get('version')
             except json.JSONDecodeError:
                 logging.error('Error in load config')
         else:
             pass
+        
+        #버전 파일 가져오기 없으면 만들기(기본 버전은 0.0.0으로 대체)
+        if os.path.exists('./src/version.json'):
+            try:
+                with open('./src/version.json', 'r') as f:
+                    version = json.load(f)
+                    self.version = version.get('version')
+            except json.JSONDecodeError:
+                logging.error('Error in load version')
+        else:
+            config = {'versioin': '0.0.0'}
+            self.version = '0.0.0'
+
+            with open('./src/version.json', 'w') as f:
+                json.dump(config, f)
 
     def create_startup_shortcut(self):
         # 현재 실행 중인 파이썬 스크립트의 전체 경로
@@ -670,8 +684,7 @@ class Widget(QWidget):
             'y': y,
             'width': public.width,
             'height': public.height,
-            'theme': self.theme_manager.current_theme.value,
-            'version': public.version
+            'theme': self.theme_manager.current_theme.value
         }
         with open(self.config_file, 'w') as f:
             json.dump(config, f)
@@ -1010,7 +1023,7 @@ class Widget(QWidget):
             content.setLayout(contentLayout)
             content.setFixedHeight(30)
             content.setCursor(Qt.PointingHandCursor)
-            content.mousePressEvent = partial(self.show_event, event=text)
+            content.mousePressEvent = partial(self.show_event, event=text, current_date=current_date)
             listLayout.addWidget(content)
 
             contentLabel = QLabel(text.split("|")[0], self.detailFrame) #일정 내용
@@ -1150,6 +1163,16 @@ class Widget(QWidget):
         exitBtn.mousePressEvent = partial(self.detail_close, widget=self.detailFrame)
         exitBtn.setCursor(Qt.PointingHandCursor)
 
+        # 프레임을 최상단으로 올리기
+        self.detailFrame.raise_()
+        self.detailFrame.show()
+
+    def detail_close(self, e, widget):
+        widget.deleteLater()
+        self.detailFrame = None
+
+    def show_event(self, e, event, current_date):
+        #일정 자세히 보기
         self.contentFrame = QWidget(self.detailFrame)
         self.contentFrame.setGeometry(0, 0, 300, 500)
         self.contentFrame.setProperty('class', 'detailFrame')
@@ -1160,8 +1183,6 @@ class Widget(QWidget):
         self.contentDetailLayout.setAlignment(Qt.AlignTop)
 
         self.contentFrame.setLayout(self.contentDetailLayout)
-
-        current_date = date(self.year, self.month, int(label.text())).isoformat()
 
         dateLabel2 = QLabel(f'{current_date}', self.contentFrame) #날짜 표시
         self.contentDetailLayout.addWidget(dateLabel2)
@@ -1182,19 +1203,6 @@ class Widget(QWidget):
         exitBtn.mousePressEvent = partial(self.event_close)
         exitBtn.setCursor(Qt.PointingHandCursor)
 
-        self.contentFrame.setVisible(False)
-
-        # 프레임을 최상단으로 올리기
-        self.detailFrame.raise_()
-        self.detailFrame.show()
-
-    def detail_close(self, e, widget):
-        widget.deleteLater()
-        self.detailFrame = None
-
-    def show_event(self, e, event):
-        self.contentFrame.setVisible(True)
-
         summary = QLabel("일정 : " + event.split("|")[0], self.contentFrame)
         self.contentDetailLayout.addWidget(summary)
         summary.setFixedHeight(40)
@@ -1214,8 +1222,12 @@ class Widget(QWidget):
             location.setFixedHeight(40)
             location.setFont(self.nomal)
 
+        self.contentFrame.raise_()
+        self.contentFrame.show()
+
     def event_close(self, e):
         self.contentFrame.setVisible(False)
+        self.contentFrame = None
 
     def add_event(self, summary, start, end, location, label):
         if not public.service:
@@ -1306,9 +1318,7 @@ class Widget(QWidget):
                 'x': x,
                 'y': y,
                 'width': public.width,
-                'height': public.height,
-                'theme': self.theme_manager.current_theme.value,
-                'version': public.version
+                'height': public.height
             }
 
             with open(self.config_file, 'w') as f:
@@ -1328,11 +1338,9 @@ class Widget(QWidget):
             'y': y,
             'width': width,
             'height': height,
-            'theme': self.theme_manager.current_theme.value,
-            'version': version
+            'theme': self.theme_manager.current_theme.value
         }
 
-        
         with open(self.config_file, 'w') as f:
             json.dump(config, f)
         
@@ -1486,18 +1494,10 @@ def start_timers():
 
 def save_version(version):
 
-    config = {
-        'x': window.x,
-        'y': window.y,
-        'width': public.width,
-        'height': public.height,
-        'theme': public.theme,
-        'version': version
-    }
-
+    config = {'versioin': version}
     public.version = version
 
-    with open(window.config_file, 'w') as f:
+    with open('./src/version.json', 'w') as f:
         json.dump(config, f)
 
 if __name__ == '__main__':
