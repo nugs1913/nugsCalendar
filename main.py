@@ -1,168 +1,5 @@
-import sys, os, json, calendar, time, sys
-from datetime import datetime, timedelta, date
-from PySide6.QtWidgets import (QApplication, QWidget, QLabel, QLineEdit, 
-                               QDateTimeEdit, QPushButton, QGridLayout, 
-                               QVBoxLayout, QHBoxLayout, QProgressDialog, 
-                               QMessageBox)
-from PySide6.QtCore import Qt, QTimer, QTime, QDateTime
-from PySide6.QtGui import QFont, QFontDatabase
-
-from functools import partial
-from enum import Enum
-from dataclasses import dataclass
-
-from win10toast import ToastNotifier
-from pystray import Icon, Menu, MenuItem
-from PIL import Image
-import win32com.client
-from win32com.client import Dispatch
-
-import subprocess, requests, zipfile, shutil
-from packaging import version
-
-import logging
-
-if os.path.exists('app.log'):
-    os.remove('app.log')
-
-logging.basicConfig(filename='app.log', level=logging.DEBUG,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Google API 관련 라이브러리
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from google.auth.transport.requests import Request
-
-import os
-import json
-import requests
-import subprocess
-import sys
-from packaging import version
-
-class GitHubUpdater:
-    def __init__(self, current_version, parent=None):
-        self.owner = 'nugs1913'
-        self.repo = 'nugsCalendar'
-        self.current_version = current_version
-        self.github_api = f"https://api.github.com/repos/{self.owner}/{self.repo}/releases/latest"
-        self.headers = {
-            'Authorization': 'token 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',
-            'Accept': 'application/vnd.github.v3+json'
-        }
-        self.temp_dir = "temp_update"
-        self.parent = parent  # PySide6 위젯과 연결
-
-    def check_for_updates(self):
-        try:
-            response = requests.get(self.github_api, headers=self.headers)
-            response.raise_for_status()
-            
-            latest_release = response.json()
-            latest_version = latest_release['tag_name'].lstrip('v')
-            
-            if version.parse(latest_version) > version.parse(self.current_version):
-                return latest_release, latest_version
-            return None, None
-        except requests.exceptions.RequestException as e:
-            print(f"업데이트 확인 중 오류 발생: {e}")
-            return None, None
-
-    def download_and_extract_update(self, asset_url, zip_filename):
-        try:
-            if os.path.exists(self.temp_dir):
-                shutil.rmtree(self.temp_dir)
-            os.makedirs(self.temp_dir)
-
-            # 진행 상황 창 생성
-            progress = QProgressDialog("업데이트 다운로드 중...", "취소", 0, 100, self.parent)
-            progress.setWindowTitle("업데이트 진행")
-            progress.setWindowModality(Qt.WindowModal)
-            progress.show()
-
-            headers = self.headers.copy()
-            headers['Accept'] = 'application/octet-stream'
-
-            response = requests.get(asset_url, headers=headers, stream=True)
-            response.raise_for_status()
-
-            zip_path = os.path.join(self.temp_dir, zip_filename)
-            total_size = int(response.headers.get('content-length', 0))
-            downloaded = 0
-
-            with open(zip_path, 'wb') as file:
-                for data in response.iter_content(1024):
-                    file.write(data)
-                    downloaded += len(data)
-                    if total_size > 0:
-                        progress.setValue(int((downloaded / total_size) * 100))
-                        QApplication.processEvents()  # UI 업데이트
-
-                    # 취소 버튼이 눌리면 다운로드 중단
-                    if progress.wasCanceled():
-                        raise Exception("다운로드가 취소되었습니다.")
-
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(self.temp_dir)
-
-            os.remove(zip_path)
-            progress.setValue(100)
-            progress.close()
-            return True
-
-        except Exception as e:
-            print(f"[오류] 다운로드/압축해제 중 예외 발생: {e}")
-            return False
-
-    def install_update(self):
-        """업데이트 설치"""
-        try:
-            current_dir = os.path.dirname(sys.executable)
-            current_exe = 'nugsCalendar.exe'
-            
-            # 업데이트 스크립트 생성
-            update_script = f"""
-@echo off
-timeout /t 2 /nobreak > nul
-
-:: 현재 디렉토리의 모든 파일 삭제
-for %%i in ("{current_dir}\\*") do (
-    if not "%%~nxi"=="update.bat" (
-        del "%%i" /q
-    )
-)
-
-:: 임시 디렉토리의 모든 파일을 현재 디렉토리로 복사
-xcopy "{self.temp_dir}\\*" "{current_dir}" /E /Y
-
-:: 임시 디렉토리 삭제
-rmdir "{self.temp_dir}" /S /Q
-
-:: 프로그램 재시작
-start "" "{current_exe}"
-
-:: 배치 파일 자신을 삭제
-del "%~f0"
-exit
-"""
-            
-            with open('update.bat', 'w', encoding='utf-8') as f:
-                f.write(update_script)
-            
-            # 배치 파일을 숨김 모드로 실행
-            subprocess.Popen(
-                ['cmd', '/c', 'update.bat'],
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            # 업데이트 후 새로운 버전 저장
-            save_version(new_version)
-
-            sys.exit()
-            
-        except Exception as e:
-            print(f"설치 중 오류 발생: {e}")
-            return False
+from imports import *
+import updater
 
 class Public:
 
@@ -898,6 +735,7 @@ class Widget(QWidget):
             datetime.combine(last_day, datetime.max.time())
         )
 
+        # 날짜 범위를 사용하여 휴일 + 기념일 가져오기
         holiday_dict = public.get_holiday(
             datetime.combine(first_day, datetime.min.time()),
             datetime.combine(last_day, datetime.max.time())
@@ -960,13 +798,15 @@ class Widget(QWidget):
                 day.label.style().unpolish(day.label)
                 day.label.style().polish(day.label)
                 day.label.update()
-
+                
+                # 기념일, 공휴일 구분을 위한 스타일 재지정
                 day.holidayLabel.style().unpolish(day.holidayLabel)
                 day.holidayLabel.style().polish(day.holidayLabel)
                 day.holidayLabel.update()
 
     def show_detail(self, e, label):
 
+        # 기존에 작성된 디테일창이 있으면 제거하고 다시 작성 
         if hasattr(self, 'detailFrame') and self.detailFrame is not None:
             self.detailFrame.deleteLater()
             self.detailFrame = None
@@ -992,7 +832,7 @@ class Widget(QWidget):
 
         event_texts = [f"{event['summary']}|{event['start']} ~ {event['end']}|{event['location']}" for event in events]
         
-        dateLabel = QLabel(f'{current_date}', self.detailFrame) #날짜 표시
+        dateLabel = QLabel(f'{current_date}', self.detailFrame) # 날짜 표시
         detailLayout.addWidget(dateLabel)
         dateLabel.setProperty('class', 'innerLabel')
         dateLabel.setFont(self.nomal)
@@ -1032,7 +872,7 @@ class Widget(QWidget):
             contentLabel.setWordWrap(True)
             contentLabel.setFixedWidth(220)  # 라벨 너비 고정
 
-            contentTime = QLabel(text.split("|")[1], self.detailFrame)
+            contentTime = QLabel(text.split("|")[1], self.detailFrame) #일정 시간
             contentTime.setProperty('class', 'detailLabel')
             contentTime.setFont(self.smaller)
             contentTime.setWordWrap(True)
@@ -1168,8 +1008,8 @@ class Widget(QWidget):
         self.detailFrame.show()
 
     def detail_close(self, e, widget):
-        widget.deleteLater()
-        self.detailFrame = None
+        widget.deleteLater() #요소 삭제하고
+        self.detailFrame = None #None으로 없에기 
 
     def show_event(self, e, event, current_date):
         #일정 자세히 보기
@@ -1222,12 +1062,12 @@ class Widget(QWidget):
             location.setFixedHeight(40)
             location.setFont(self.nomal)
 
-        self.contentFrame.raise_()
-        self.contentFrame.show()
+        self.contentFrame.raise_() #맨 앞으로 가져와서
+        self.contentFrame.show() #출력
 
     def event_close(self, e):
-        self.contentFrame.setVisible(False)
-        self.contentFrame = None
+        self.contentFrame.setVisible(False) #안보이게 하고
+        self.contentFrame = None #None으로 제거
 
     def add_event(self, summary, start, end, location, label):
         if not public.service:
@@ -1238,11 +1078,11 @@ class Widget(QWidget):
             'location': location,
             'start': {
                 'dateTime': start.toString(Qt.ISODate),
-                'timeZone': 'Asia/Seoul'
+                'timeZone': 'Asia/Seoul' #글로벌 대응 필요
             },
             'end': {
                 'dateTime': end.toString(Qt.ISODate),
-                'timeZone': 'Asia/Seoul'
+                'timeZone': 'Asia/Seoul' #글로벌 대응 필요 + 휴일쪽도
             }
         }
 
@@ -1330,7 +1170,6 @@ class Widget(QWidget):
         y = self.pos().y()
         width = public.width
         height = public.height
-        version = public.version
         
         # JSON 파일로 저장
         config = {
@@ -1492,32 +1331,24 @@ def start_timers():
     next_midnight = QDateTime.currentDateTime().addDays(1).toMSecsSinceEpoch() // 86400000 * 86400000
     QTimer.singleShot(next_midnight - QDateTime.currentMSecsSinceEpoch(), schedule_set_calendar)
 
-def save_version(version):
-
-    config = {'versioin': version}
-    public.version = version
-
-    with open('./src/version.json', 'w') as f:
-        json.dump(config, f)
-
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     public = Public()
     window = Widget()
     tray = Tray()
 
-    updater = GitHubUpdater(public.version, parent=window)
+    update = updater.GitHubUpdater(public.version, parent=window)
 
     print("업데이트 확인 중...")
-    release, new_version = updater.check_for_updates()
+    release, new_version = update.check_for_updates()
     if release:
         # 새로운 창에서 진행 상황 표시
         QMessageBox.information(window, "업데이트 확인", "새로운 업데이트가 있습니다!")
         asset = release['assets'][0]  # 첫 번째 자산 선택
         if asset['name'].endswith('.zip'):
-            if updater.download_and_extract_update(asset['url'], asset['name']):
+            if update.download_and_extract_update(asset['url'], asset['name']):
                 QMessageBox.information(window, "업데이트 완료", "다운로드 및 압축 해제가 완료되었습니다.\n재시작 후 적용됩니다.")
-                updater.install_update()
+                public.version = update.install_update()
         else:
             QMessageBox.warning(window, "오류", "다운로드 가능한 자산이 없습니다.")
     else:
