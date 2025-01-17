@@ -116,19 +116,13 @@ exit
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
             # 업데이트 후 새로운 버전 저장
-            self.save_version(self.new_version)
+            config = {'version': self.new_version}
 
-            sys.exit()
+            with open('./src/version.json', 'w') as f:
+                json.dump(config, f)
+
+            print(self.new_version)
             
         except Exception as e:
             print(f"설치 중 오류 발생: {e}")
             return False
-        
-    def save_version(version):
-
-        config = {'versioin': version}
-
-        with open('./src/version.json', 'w') as f:
-            json.dump(config, f)
-
-        return version

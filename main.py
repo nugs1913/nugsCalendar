@@ -1,20 +1,9 @@
 from imports import *
-import updater
+import updater, googleapi
 
 class Public:
 
     def __init__(self):
-        # Google Calendar 인증 및 서비스 설정
-        self.creds = self.get_google_credentials()
-        
-        # Google Calendar 서비스 생성
-        if self.creds:
-            self.service = build('calendar', 'v3', credentials=self.creds)
-        else:
-            self.service = None
-
-        self.noti_events = self.get_events()
-
         self.toggle = False
         self.x = 100
         self.y = 100
@@ -27,274 +16,39 @@ class Public:
         self.load_config()
 
     def load_config(self):
-        # 설정 파일이 존재하는 경우 위치 불러오기
-        if os.path.exists('config.json'):
+        config_path = 'config.json'
+        version_path = './src/version.json'
+
+        # config.json 처리
+        if os.path.exists(config_path):
             try:
-                with open('config.json', 'r') as f:
+                with open(config_path, 'r') as f:
                     config = json.load(f)
-                    self.x = config.get('x')
-                    self.y = config.get('y')
-                    self.width = config.get('width')
-                    self.height = config.get('height')
-                    self.theme = config.get('theme')
+                    self.x = config.get('x', self.x)
+                    self.y = config.get('y', self.y)
+                    self.width = config.get('width', self.width)
+                    self.height = config.get('height', self.height)
+                    self.theme = config.get('theme', self.theme)
             except json.JSONDecodeError:
-                logging.error('Error in load config')
+                logging.error('Error decoding config.json')
         else:
-            pass
-        
-        #버전 파일 가져오기 없으면 만들기(기본 버전은 0.0.0으로 대체)
-        if os.path.exists('./src/version.json'):
+            logging.info('config.json not found. Using default values.')
+
+        # version.json 처리
+        if os.path.exists(version_path):
             try:
-                with open('./src/version.json', 'r') as f:
+                with open(version_path, 'r') as f:
                     version = json.load(f)
-                    self.version = version.get('version')
+                    self.version = version.get('version', '0.0.0')
             except json.JSONDecodeError:
-                logging.error('Error in load version')
+                logging.error('Error decoding version.json')
+                self.version = '0.0.0'
         else:
-            config = {'versioin': '0.0.0'}
+            logging.info('version.json not found. Creating default file.')
             self.version = '0.0.0'
-
-            with open('./src/version.json', 'w') as f:
-                json.dump(config, f)
-
-    def create_startup_shortcut(self):
-        # 현재 실행 중인 파이썬 스크립트의 전체 경로
-        script_path = os.path.abspath(sys.argv[0])
-        
-        # 현재 사용자의 시작프로그램 폴더 사용
-        startup_folder = os.path.join(os.getenv('APPDATA'), f'Microsoft\Windows\Start Menu\Programs\Startup')
-        
-        # 폴더가 존재하는지 확인
-        if not os.path.exists(startup_folder):
-            print(f"경로를 찾을 수 없습니다: {startup_folder}")
-            return
-        
-        # 바로가기 파일 이름 설정
-        shortcut_path = os.path.join(startup_folder, "nugsCalendar.lnk")
-        
-        # Windows Shell 객체 생성
-        shell = win32com.client.Dispatch("WScript.Shell")
-        
-        # 바로가기 파일 이름 설정
-        shortcut_path = os.path.join(startup_folder, "nugsCalendar.lnk")
-        
-        shell = Dispatch("WScript.Shell")
-        shortcut = shell.CreateShortCut(shortcut_path)
-        shortcut.TargetPath = script_path
-        shortcut.WorkingDirectory = os.path.dirname(script_path)
-        shortcut.save()
-        
-        print(f"바로가기가 생성되었습니다: {shortcut_path}")
-
-    def get_google_credentials(self):
-        # OAuth 2.0 스코프 설정 (캘린더 읽기 권한)
-        SCOPES = ['https://www.googleapis.com/auth/calendar']
-        
-        creds = None
-        # token.json 파일 확인 (이전 인증 토큰)
-        if os.path.exists('token.json'):
-            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-        
-        # 토큰이 없거나 유효하지 않은 경우
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                try:
-                    creds.refresh(Request())
-                except Exception as e:
-                    logging.error(f"Token refresh error: {e}")
-                    creds = None
-            
-            # 새로운 인증 진행
-            if not creds:
-                try:
-                    if getattr(sys, 'frozen', False):
-                        client_secret_path = os.path.join(sys._MEIPASS, 'client_secret.json')
-                    else:
-                        client_secret_path = 'client_secret.json'
-                    
-
-                    flow = InstalledAppFlow.from_client_secrets_file(
-                        client_secret_path,  # OAuth 클라이언트 설정 JSON 파일
-                        SCOPES
-                    )
-                    creds = flow.run_local_server(port=0)
-                    
-                    # 토큰 저장
-                    with open('token.json', 'w') as token:
-                        token.write(creds.to_json())
-
-                    self.create_startup_shortcut()
-                except Exception as e:
-                    logging.error(f"Authentication error: {e}")
-                    return None
-        
-        return creds
-    
-    def get_calendar_events(self, start_date, end_date):
-        if not self.service:
-            # Google Calendar 인증 및 서비스 설정
-            self.creds = self.get_google_credentials()
-            
-            # Google Calendar 서비스 생성
-            if self.creds:
-                self.service = build('calendar', 'v3', credentials=self.creds)
-            else:
-                self.service = None
-
-        max_retries = 3
-
-        for attempt in range(max_retries):
-            try:
-                events_result = self.service.events().list(
-                    calendarId='primary',
-                    timeMin=start_date.isoformat() + 'Z',
-                    timeMax=end_date.isoformat() + 'Z',
-                    singleEvents=True,
-                    orderBy='startTime',
-                    fields='items(id, summary, location, start/dateTime, end/dateTime, start/date, end/date)'
-                ).execute()
-                events = events_result.get('items', [])
-            
-                event_dict = {}
-                for event in events:
-                    start = event.get('start', {}).get('dateTime') if event.get('start', {}).get('dateTime') else event.get('start', {}).get('date')
-                    end = event.get('end', {}).get('dateTime') if event.get('end', {}).get('dateTime') else event.get('start', {}).get('date')
-                    location = event.get('location', {}) if event.get('location', {}) else ''
-
-                    if start and end:
-                        if datetime.fromisoformat(start).date() != datetime.fromisoformat(end).date():
-                            for long in self.date_range(start, end):
-                                if long.isoformat() not in event_dict:
-                                    event_dict[long.isoformat()] = []
-
-                                event_dict[long.isoformat()].append({
-                                    "id": event.get('id'),
-                                    "summary": event.get('summary'),
-                                    "start": datetime.fromisoformat(start).date().isoformat(),
-                                    "end": datetime.fromisoformat(end).date().isoformat(),
-                                    "location": location
-                                })
-                        else:
-                            event_date = datetime.fromisoformat(start).date().isoformat()
-                            if event_date not in event_dict:
-                                event_dict[event_date] = []
-
-                            event_dict[event_date].append({
-                                "id": event.get('id'),
-                                "summary": event.get('summary'), 
-                                "start": datetime.fromisoformat(start).time().isoformat(), 
-                                "end": datetime.fromisoformat(end).time().isoformat(),
-                                "location": location
-                            })
-
-                return event_dict
-            except Exception as e:
-                logging.error(f"Error fetching events: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(2 ** attempt)  # 지수 백오프
-                return []
-
-    def get_events(self):
-        if not self.service:
-            # Google Calendar 인증 및 서비스 설정
-            self.creds = self.get_google_credentials()
-            
-            # Google Calendar 서비스 생성
-            if self.creds:
-                self.service = build('calendar', 'v3', credentials=self.creds)
-            else:
-                self.service = None
-
-        try:
-            now = datetime.now()
-            start_date = now - timedelta(hours=24)
-            end_date = now + timedelta(hours=24)
-
-            events_result = self.service.events().list(
-                calendarId='primary',
-                timeMin=start_date.isoformat() + 'Z',
-                timeMax=end_date.isoformat() + 'Z',
-                singleEvents=True,
-                orderBy='startTime',
-                fields='items(summary,start/dateTime,end/dateTime)'
-            ).execute()
-            events = events_result.get('items', [])
-
-            noti_dict = {}
-            for event in events:
-                start = event.get('start', {}).get('dateTime')
-                end = event.get('end', {}).get('dateTime')
-
-                if start and end:
-                    event_date = start_date.date().isoformat()
-
-                    if event_date not in noti_dict:
-                        noti_dict[event_date] = []
-
-                    noti_dict[event_date].append({
-                        "summary": event.get('summary'), 
-                        "start": datetime.fromisoformat(start).time().isoformat(), 
-                        "end": datetime.fromisoformat(end).time().isoformat()
-                    })
-
-            return noti_dict
-
-        except Exception as e:
-            logging.error(f"Error fetching events: {e}")
-            return []
-
-    def get_holiday(self, start_date, end_date):
-        if not self.service:
-            # Google Calendar 인증 및 서비스 설정
-            self.creds = self.get_google_credentials()
-            
-            # Google Calendar 서비스 생성
-            if self.creds:
-                self.service = build('calendar', 'v3', credentials=self.creds)
-            else:
-                self.service = None
-
-        try:
-            events_result = self.service.events().list(
-                calendarId='ko.south_korea#holiday@group.v.calendar.google.com',
-                timeMin=start_date.isoformat() + 'Z',
-                timeMax=end_date.isoformat() + 'Z',
-                singleEvents=True,
-                orderBy='startTime',
-                fields='items(summary, start/date, description)'
-            ).execute()
-            events = events_result.get('items', [])
-
-            holiday_dict = {}
-            for event in events:
-                start = event.get('start', {}).get('date')
-
-                if start:
-                    event_date = start
-
-                    if event_date not in holiday_dict:
-                        holiday_dict[event_date] = {}
-
-                    holiday_dict[event_date] = {
-                        'summary': event.get('summary'),
-                        'description': event.get('description')
-                    }   
-
-            return holiday_dict
-
-        except Exception as e:
-            logging.error(f"Error fetching events: {e}")
-            return []
-
-    def date_range(self, start, end):
-        date_list = []
-        start_date = datetime.fromisoformat(start).date()
-        end_date = datetime.fromisoformat(end).date()
-        while start_date <= end_date:
-            date_list.append(start_date)
-            start_date += timedelta(days=1)
-
-        return date_list
+            os.makedirs(os.path.dirname(version_path), exist_ok=True)
+            with open(version_path, 'w') as f:
+                json.dump({'version': self.version}, f)
 
 class Theme(Enum):
     DARK = "dark"
@@ -512,8 +266,8 @@ class Widget(QWidget):
         self.theme_manager.set_theme(theme)
         self.update_stylesheet()
 
-        x = self.pos().x()
-        y = self.pos().y()
+        x = self.x
+        y = self.y
 
         # 변경된 테마 저장
         config = {
@@ -668,22 +422,6 @@ class Widget(QWidget):
         else:
             self.set_theme(Theme.DARK)
 
-    def display_none(widget, hide=True):
-        # 현재 StyleSheet 가져오기
-        current_style = widget.styleSheet()
-        
-        # 'display: none' 속성을 추가 또는 제거한 새로운 StyleSheet 생성
-        new_style = []
-        for line in current_style.split(';'):
-            if 'display' not in line:
-                new_style.append(line)
-        
-        if hide:
-            new_style.append('display: none')
-    
-        # 새로운 StyleSheet 설정
-        widget.setStyleSheet(';'.join(new_style))
-
     def set_calendar(self):
         logging.debug('set_calendar called')
 
@@ -730,13 +468,7 @@ class Widget(QWidget):
         #         holiday_dict[locdate] = dateName 휴일 구글에서 가져오고 있음 나중에 음력 넣고 싶으면 사용
 
         # 날짜 범위를 사용하여 이벤트 가져오기
-        self.event_dict = public.get_calendar_events(
-            datetime.combine(first_day, datetime.min.time()),
-            datetime.combine(last_day, datetime.max.time())
-        )
-
-        # 날짜 범위를 사용하여 휴일 + 기념일 가져오기
-        holiday_dict = public.get_holiday(
+        self.event_dict, holiday_dict = api.get_calendar_events_and_holidays(
             datetime.combine(first_day, datetime.min.time()),
             datetime.combine(last_day, datetime.max.time())
         )
@@ -1070,7 +802,7 @@ class Widget(QWidget):
         self.contentFrame = None #None으로 제거
 
     def add_event(self, summary, start, end, location, label):
-        if not public.service:
+        if not api.service:
             return
 
         event = {
@@ -1087,7 +819,7 @@ class Widget(QWidget):
         }
 
         try:
-            public.service.events().insert(calendarId='primary', body=event).execute()
+            api.service.events().insert(calendarId='primary', body=event).execute()
             self.set_calendar()
             self.show_detail(None, label)
         except Exception as e:
@@ -1095,11 +827,11 @@ class Widget(QWidget):
 
     def delete_event(self, event_id, label):
 
-        if not public.service:
+        if not api.service:
             return
 
         try:
-            public.service.events().delete(calendarId='primary', eventId=event_id).execute()
+            api.service.events().delete(calendarId='primary', eventId=event_id).execute()
             self.set_calendar()
             self.show_detail(None, label)
         except Exception as e:
@@ -1137,8 +869,8 @@ class Widget(QWidget):
 
     def start_move(self, event):
         self.moving = True
-        self.x = event.x()
-        self.y = event.y()
+        self.x = event.position().x()
+        self.y = event.position().y()
 
     def stop_move(self, event):
         self.moving = False
@@ -1147,8 +879,8 @@ class Widget(QWidget):
 
     def do_move(self, event):
         if self.moving and self.x is not None and self.y is not None:
-            deltax = event.x() - self.x
-            deltay = event.y() - self.y
+            deltax = event.position().x() - self.x
+            deltay = event.position().y() - self.y
             x = self.pos().x() + deltax
             y = self.pos().y() + deltay
             self.move(x, y)
@@ -1158,7 +890,8 @@ class Widget(QWidget):
                 'x': x,
                 'y': y,
                 'width': public.width,
-                'height': public.height
+                'height': public.height,
+                'theme': self.theme_manager.current_theme.value
             }
 
             with open(self.config_file, 'w') as f:
@@ -1182,16 +915,14 @@ class Widget(QWidget):
 
         with open(self.config_file, 'w') as f:
             json.dump(config, f)
-        
-        # 프로그램 종료
-        self.close()
 
 class Tray:
 
     def __init__(self):
         self.toaster = ToastNotifier()
 
-        self.event_dict = {}
+        self.event_dict = api.get_events()
+        self.noti_dict = {}
 
         # 아이콘 설정
         self.icon = Icon(
@@ -1236,8 +967,8 @@ class Tray:
             now = datetime.now()
             logging.debug('check notification called')
             keys_to_delete = []
-            if self.event_dict != None:
-                for event_time_str, summary in self.event_dict.items():
+            if self.noti_dict != None:
+                for event_time_str, summary in self.noti_dict.items():
                     event_time = datetime.strptime(event_time_str, "%H:%M:%S").time()
                     event_datetime = datetime.combine(now.date(), event_time)
                     
@@ -1246,7 +977,7 @@ class Tray:
                         keys_to_delete.append(event_time_str)
 
             for key in keys_to_delete:
-                del self.event_dict[key]
+                del self.noti_dict[key]
         except Exception as e:
             logging.error(f'Error in checking noti events: {e}')
 
@@ -1254,27 +985,27 @@ class Tray:
         logging.debug('set notification called')
 
         try:
-            for event in public.noti_events.values():
+            for event in self.event_dict.values():
                 for e in event:
                     start = e.get('start', {})
                     end = e.get('end', {})
                     if start and end:
                         start_time = start
-                        if start_time not in self.event_dict:
-                            self.event_dict[start_time] = []
+                        if start_time not in self.noti_dict:
+                            self.noti_dict[start_time] = []
 
-                        self.event_dict[start_time].append(e.get('summary', 'No Title'))
+                        self.noti_dict[start_time].append(e.get('summary', 'No Title'))
         except Exception as e:
             logging.error(f'Error in set noti events: {e}')
     
-
     def reload_noti(self):
-        public.noti_events = public.get_events()
-        self.event_dict = {}
+        self.event_dict = api.get_events()
+        self.noti_dict = {}
         self.set_notification()
 
     def on_exit(self, icon):
         icon.stop()
+        window.on_closing()
         os._exit(0)
 
     def do_none(self):
@@ -1333,6 +1064,7 @@ def start_timers():
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    api = googleapi.google_api()
     public = Public()
     window = Widget()
     tray = Tray()
@@ -1348,7 +1080,8 @@ if __name__ == '__main__':
         if asset['name'].endswith('.zip'):
             if update.download_and_extract_update(asset['url'], asset['name']):
                 QMessageBox.information(window, "업데이트 완료", "다운로드 및 압축 해제가 완료되었습니다.\n재시작 후 적용됩니다.")
-                public.version = update.install_update()
+                update.install_update()
+                sys.exit()
         else:
             QMessageBox.warning(window, "오류", "다운로드 가능한 자산이 없습니다.")
     else:
