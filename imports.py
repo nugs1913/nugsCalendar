@@ -1,4 +1,4 @@
-import sys, os, json, calendar, time, subprocess, requests, zipfile, shutil
+import sys, os, json, calendar, time, subprocess, requests, zipfile, shutil, sqlite3
 from datetime import datetime, timedelta, date
 from PySide6.QtWidgets import (QApplication, QWidget, QLabel, QLineEdit, 
                                QDateTimeEdit, QPushButton, QGridLayout, 

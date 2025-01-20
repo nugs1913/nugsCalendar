@@ -9,6 +9,70 @@ class google_api():
             self.service = build('calendar', 'v3', credentials=self.creds)
         else:
             self.service = None
+    def create_table(self, date):
+        con = sqlite3.connect('./src/schedule.db')
+        cursor = con.cursor()
+        date = 'd' + date.replace('-', '')
+
+        try:
+            cursor.execute(f'create table {date} (id text primary key, summary text, startTime text, endTime text, description text, location text)')
+            return True
+        except Exception as e:
+            print(e)
+            return False
+        finally:
+            con.commit()
+            con.close()
+    
+    def insert_event(self, eventId, date, summary, startTime, endTime, description, location):
+        con = sqlite3.connect('./src/schedule.db')
+        cursor = con.cursor()
+        date = 'd' + date.split("T")[0].replace('-', '')
+
+        try:
+            cursor.execute(f"select count(*) from {date} where id=?", (eventId,))
+            data = cursor.fetchone()[0]
+
+            print(data)
+
+            if data:
+                cursor.execute(f"update {date} set id=?, summary=?, startTime=?, endTime=?, description=?, location=? where id=?",
+                    (eventId, summary, startTime, endTime, description, location, eventId))
+            else:
+                cursor.execute(f"insert into {date} values (?, ?, ?, ?, ?, ?)", 
+                    (eventId, summary, startTime, endTime, description, location))
+
+            return True
+        except Exception as e:
+            print(e)
+            return False
+        finally:
+            con.commit()
+            cursor.close()
+            con.close()
+
+    def delete_event(self, eventId):
+        con = sqlite3.connect('./src/schedule.db')
+        cursor = con.cursor()
+        date = 'd' + date.split("T")[0].replace('-', '')
+
+        try:
+            cursor.execute(f"select count(*) from {date} where id=?", (eventId,))
+            data = cursor.fetchone()[0]
+
+            print(data)
+
+            if data:
+                cursor.execute(f"delete from {date} where id=?", (eventId,))
+
+            return True
+        except Exception as e:
+            print(e)
+            return False
+        finally:
+            con.commit()
+            cursor.close()
+            con.close()
 
     def get_google_credentials(self):
         # OAuth 2.0 스코프 설정 (캘린더 읽기 권한)
@@ -54,7 +118,7 @@ class google_api():
         
         return creds
 
-    def get_calendar_events_and_holidays(self, start_date, end_date):
+    def get_calendar_events(self, start_date, end_date, get_range):
         if not self.service:
             # Google Calendar 인증 및 서비스 설정
             self.creds = self.get_google_credentials()
@@ -65,8 +129,13 @@ class google_api():
             else:
                 self.service = None
 
-        max_retries = 3
-        calendar_ids = ['primary', 'ko.south_korea#holiday@group.v.calendar.google.com']
+        max_retries = 1
+        if get_range == 'all':
+            calendar_ids = ['primary', 'ko.south_korea#holiday@group.v.calendar.google.com']
+            order_by = 'startTime'
+        else:
+            calendar_ids = ['primary']
+            order_by = 'update'
 
         for attempt in range(max_retries):
             try:
@@ -77,62 +146,101 @@ class google_api():
                         timeMin=start_date.isoformat() + 'Z',
                         timeMax=end_date.isoformat() + 'Z',
                         singleEvents=True,
-                        orderBy='startTime',
+                        orderBy=order_by,
                         fields='items(id, summary, location, start/dateTime, end/dateTime, start/date, end/date, description)'
                     ).execute()
                     events.extend(events_result.get('items', []))
                 
-                event_dict = {}
-                holiday_dict = {}
                 for event in events:
                     start = event.get('start', {}).get('dateTime') if event.get('start', {}).get('dateTime') else event.get('start', {}).get('date')
                     end = event.get('end', {}).get('dateTime') if event.get('end', {}).get('dateTime') else (datetime.fromisoformat(event.get('end', {}).get('date')) - timedelta(days=1)).isoformat()
                     location = event.get('location', {}) if event.get('location', {}) else ''
-                    description = event.get('description', '') if event.get('description', '') else ''
+                    description = event.get('description', '-') if event.get('description', '-') else ''
 
                     if start and end:
-                        if event.get('description', ''):
-                            event_date = start
+                        if event.get('description', '-') != "-": #공휴일, 기념일
+
+                            self.create_table(start)
+                            self.insert_event('holiday', start, event.get('summary'), start, end, description, '-')
+                        else:
+                            if datetime.fromisoformat(start).date() != datetime.fromisoformat(end).date(): #긴 일정
+                                for long in self.date_range(start, end):
+                                    self.create_table(long.isoformat())
+                                    self.insert_event(event.get('id'),
+                                                      long.isoformat(),
+                                                      event.get('summary'),
+                                                      datetime.fromisoformat(start).date().isoformat(),
+                                                      datetime.fromisoformat(end).date().isoformat(),
+                                                      '-',
+                                                      location)
+                            else: #일반 하루짜리 일정
+                                event_date = datetime.fromisoformat(start).date().isoformat()
+                                self.create_table(event_date)
+                                self.insert_event(event.get('id'),
+                                                  event_date,
+                                                  event.get('summary'),
+                                                  datetime.fromisoformat(start).isoformat(),
+                                                  datetime.fromisoformat(end).isoformat(),
+                                                  '-',
+                                                  location)
+
+            except Exception as e:
+                logging.error(f"Error fetching events: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # 지수 백오프
+
+    def get_calendar_events_from_db(self, first, end):
+        event_dict = {}
+        holiday_dict = {}
+
+        con = sqlite3.connect('./src/schedule.db')
+        cursor = con.cursor()
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = cursor.fetchall()
+        tables = [item[0] for item in tables]
+
+        try:
+            for date in self.date_range(str(first), str(end)):
+                table = 'd' + date.isoformat().replace('-', '')
+                if table in tables:
+                    data = cursor.execute(f'select * from {table}')
+                    data = data.fetchall()
+
+                    for d in data:
+                        eventId = d[0]
+                        summary = d[1]
+                        event_date = date.isoformat()
+                        start = d[2]
+                        end = d[3]
+                        description = d[4]
+                        location = d[5]
+
+                        if eventId == "holiday":
 
                             if event_date not in holiday_dict:
                                 holiday_dict[event_date] = {}
 
                             holiday_dict[event_date] = {
-                                'summary': event.get('summary'),
+                                'summary': summary,
                                 'description': description
                             }
                         else:
-                            if datetime.fromisoformat(start).date() != datetime.fromisoformat(end).date():
-                                for long in self.date_range(start, end):
-                                    if long.isoformat() not in event_dict:
-                                        event_dict[long.isoformat()] = []
+                            if event_date not in event_dict:
+                                event_dict[event_date] = []
 
-                                    event_dict[long.isoformat()].append({
-                                        "id": event.get('id'),
-                                        "summary": event.get('summary'),
-                                        "start": datetime.fromisoformat(start).date().isoformat(),
-                                        "end": datetime.fromisoformat(end).date().isoformat(),
-                                        "location": location
-                                    })
-                            else:
-                                event_date = datetime.fromisoformat(start).date().isoformat()
-                                if event_date not in event_dict:
-                                    event_dict[event_date] = []
+                            event_dict[event_date].append({
+                                "id": eventId,
+                                "summary": summary, 
+                                "start": datetime.fromisoformat(start).time().isoformat(), 
+                                "end": datetime.fromisoformat(end).time().isoformat(),
+                                "location": location
+                            })
 
-                                event_dict[event_date].append({
-                                    "id": event.get('id'),
-                                    "summary": event.get('summary'), 
-                                    "start": datetime.fromisoformat(start).time().isoformat(), 
-                                    "end": datetime.fromisoformat(end).time().isoformat(),
-                                    "location": location
-                                })
-
-                return event_dict, holiday_dict
-            except Exception as e:
-                logging.error(f"Error fetching events: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(2 ** attempt)  # 지수 백오프
-                return {}, {}
+            return event_dict, holiday_dict
+        except Exception as e:
+            logging.error(f"Error fetching events: {e}")
+            return {}, {}
 
     def get_events(self):
         if not self.service:
@@ -221,3 +329,30 @@ class google_api():
         shortcut.save()
         
         print(f"바로가기가 생성되었습니다: {shortcut_path}")
+
+if __name__ == '__main__':
+    api = google_api()
+
+    now = datetime.now()
+    start = now - timedelta(days=30)
+    end = now + timedelta(days=1)
+
+    # 해당 월의 첫날 생성
+    first_day = date(start.year, start.month, 1)
+    
+    # 해당 월의 마지막 날 계산
+    _, last_day_of_month = calendar.monthrange(end.year, end.month)
+    last_day = date(end.year, end.month, last_day_of_month)
+
+    # api.get_calendar_events(
+    #     datetime.combine(first_day, datetime.min.time()),
+    #     datetime.combine(last_day, datetime.max.time()),
+    #     'all'
+    # )
+
+    event, holiday = api.get_calendar_events_from_db(
+        first_day,
+        last_day
+    )
+
+    print(event)

@@ -1,55 +1,6 @@
 from imports import *
 import updater, googleapi
 
-class Public:
-
-    def __init__(self):
-        self.toggle = False
-        self.x = 100
-        self.y = 100
-        self.width = 900
-        self.height = 900
-        self.theme = 'light'
-
-        self.auto_sync = True
-
-        self.load_config()
-
-    def load_config(self):
-        config_path = 'config.json'
-        version_path = './src/version.json'
-
-        # config.json 처리
-        if os.path.exists(config_path):
-            try:
-                with open(config_path, 'r') as f:
-                    config = json.load(f)
-                    self.x = config.get('x', self.x)
-                    self.y = config.get('y', self.y)
-                    self.width = config.get('width', self.width)
-                    self.height = config.get('height', self.height)
-                    self.theme = config.get('theme', self.theme)
-            except json.JSONDecodeError:
-                logging.error('Error decoding config.json')
-        else:
-            logging.info('config.json not found. Using default values.')
-
-        # version.json 처리
-        if os.path.exists(version_path):
-            try:
-                with open(version_path, 'r') as f:
-                    version = json.load(f)
-                    self.version = version.get('version', '0.0.0')
-            except json.JSONDecodeError:
-                logging.error('Error decoding version.json')
-                self.version = '0.0.0'
-        else:
-            logging.info('version.json not found. Creating default file.')
-            self.version = '0.0.0'
-            os.makedirs(os.path.dirname(version_path), exist_ok=True)
-            with open(version_path, 'w') as f:
-                json.dump({'version': self.version}, f)
-
 class Theme(Enum):
     DARK = "dark"
     LIGHT = "light"
@@ -239,8 +190,18 @@ class Widget(QWidget):
         self.config_file = 'config.json'
         self.click_count = 0
         self.moving = False
-        self.x = public.x
-        self.y = public.y
+
+        self.toggle = False
+        self.x = 100
+        self.y = 100
+        self.width = 900
+        self.height = 900
+        self.theme = 'light'
+        self.version = '0.0.0'
+
+        self.auto_sync = True
+
+        self.load_config()
 
         self.detailFrame = None
 
@@ -259,22 +220,52 @@ class Widget(QWidget):
         self.small = QFont(font_family, 10)
         self.smaller = QFont(font_family, 8)
 
-        self.set_theme(Theme(public.theme))
+        self.set_theme(Theme(self.theme))
         self.initUI()
+
+    def load_config(self):
+        version_path = './src/version.json'
+
+        # config.json 처리
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, 'r') as f:
+                    config = json.load(f)
+                    self.x = config.get('x', self.x)
+                    self.y = config.get('y', self.y)
+                    self.width = config.get('width', self.width)
+                    self.height = config.get('height', self.height)
+                    self.theme = config.get('theme', self.theme)
+            except json.JSONDecodeError:
+                logging.error('Error decoding config.json')
+        else:
+            logging.info('config.json not found. Using default values.')
+
+        # version.json 처리
+        if os.path.exists(version_path):
+            try:
+                with open(version_path, 'r') as f:
+                    version = json.load(f)
+                    self.version = version.get('version', '0.0.0')
+            except json.JSONDecodeError:
+                logging.error('Error decoding version.json')
+        else:
+            logging.info('version.json not found. Creating default file.')
+
+            os.makedirs(os.path.dirname(version_path), exist_ok=True)
+            with open(version_path, 'w') as f:
+                json.dump({'version': self.version}, f)
 
     def set_theme(self, theme: Theme):
         self.theme_manager.set_theme(theme)
         self.update_stylesheet()
 
-        x = self.x
-        y = self.y
-
         # 변경된 테마 저장
         config = {
-            'x': x,
-            'y': y,
-            'width': public.width,
-            'height': public.height,
+            'x': self.x,
+            'y': self.y,
+            'width': self.width,
+            'height': self.height,
             'theme': self.theme_manager.current_theme.value
         }
         with open(self.config_file, 'w') as f:
@@ -292,7 +283,7 @@ class Widget(QWidget):
     def initUI(self):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setGeometry(public.x, public.y, public.width, public.height)
+        self.setGeometry(self.x, self.y, self.width, self.height)
 
         self.showFrame()
 
@@ -468,9 +459,9 @@ class Widget(QWidget):
         #         holiday_dict[locdate] = dateName 휴일 구글에서 가져오고 있음 나중에 음력 넣고 싶으면 사용
 
         # 날짜 범위를 사용하여 이벤트 가져오기
-        self.event_dict, holiday_dict = api.get_calendar_events_and_holidays(
-            datetime.combine(first_day, datetime.min.time()),
-            datetime.combine(last_day, datetime.max.time())
+        self.event_dict, holiday_dict = api.get_calendar_events_from_db(
+            first_day,
+            last_day,
         )
 
         # 달력에 날짜 표시
@@ -820,6 +811,11 @@ class Widget(QWidget):
 
         try:
             api.service.events().insert(calendarId='primary', body=event).execute()
+            api.get_calendar_events(
+                datetime.combine(start.toString(Qt.ISODate), datetime.min.time()),
+                datetime.combine(end.toString(Qt.ISODate), datetime.max.time()),
+                'update'
+            )
             self.set_calendar()
             self.show_detail(None, label)
         except Exception as e:
@@ -832,6 +828,7 @@ class Widget(QWidget):
 
         try:
             api.service.events().delete(calendarId='primary', eventId=event_id).execute()
+            api.delete_event(event_id)
             self.set_calendar()
             self.show_detail(None, label)
         except Exception as e:
@@ -889,8 +886,8 @@ class Widget(QWidget):
             config = {
                 'x': x,
                 'y': y,
-                'width': public.width,
-                'height': public.height,
+                'width': self.width,
+                'height': self.height,
                 'theme': self.theme_manager.current_theme.value
             }
 
@@ -901,8 +898,8 @@ class Widget(QWidget):
         # 현재 창 위치와 크기 저장
         x = self.pos().x()
         y = self.pos().y()
-        width = public.width
-        height = public.height
+        width = self.width
+        height = self.height
         
         # JSON 파일로 저장
         config = {
@@ -1065,11 +1062,10 @@ def start_timers():
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     api = googleapi.google_api()
-    public = Public()
     window = Widget()
     tray = Tray()
 
-    update = updater.GitHubUpdater(public.version, parent=window)
+    update = updater.GitHubUpdater(window.version, parent=window)
 
     print("업데이트 확인 중...")
     release, new_version = update.check_for_updates()
@@ -1089,7 +1085,7 @@ if __name__ == '__main__':
     
     window.show()
 
-    if public.auto_sync:
+    if window.auto_sync:
         auto_sync = QTimer()
         auto_sync.timeout.connect(tray.reload_by_sync)
         auto_sync.start(600000)  # 10분마다 실행
