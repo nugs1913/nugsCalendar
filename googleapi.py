@@ -12,13 +12,12 @@ class google_api():
     def create_table(self, date):
         con = sqlite3.connect('./src/schedule.db')
         cursor = con.cursor()
-        date = 'd' + date.replace('-', '')
-
+        date = 'd' + date.split("T")[0].replace('-', '')
         try:
-            cursor.execute(f'create table {date} (id text primary key, summary text, startTime text, endTime text, description text, location text)')
+            cursor.execute(f'create table if not exists {date} (id text primary key, summary text, startTime text, endTime text, description text, location text)')
             return True
         except Exception as e:
-            print(e)
+            logging.error(f"DB - create table error: {e}")
             return False
         finally:
             con.commit()
@@ -33,8 +32,6 @@ class google_api():
             cursor.execute(f"select count(*) from {date} where id=?", (eventId,))
             data = cursor.fetchone()[0]
 
-            print(data)
-
             if data:
                 cursor.execute(f"update {date} set id=?, summary=?, startTime=?, endTime=?, description=?, location=? where id=?",
                     (eventId, summary, startTime, endTime, description, location, eventId))
@@ -44,14 +41,13 @@ class google_api():
 
             return True
         except Exception as e:
-            print(e)
+            logging.error(f"DB - insert event error: {e}")
             return False
         finally:
             con.commit()
-            cursor.close()
             con.close()
 
-    def delete_event(self, eventId):
+    def delete_event(self, eventId, date):
         con = sqlite3.connect('./src/schedule.db')
         cursor = con.cursor()
         date = 'd' + date.split("T")[0].replace('-', '')
@@ -60,18 +56,48 @@ class google_api():
             cursor.execute(f"select count(*) from {date} where id=?", (eventId,))
             data = cursor.fetchone()[0]
 
-            print(data)
-
             if data:
                 cursor.execute(f"delete from {date} where id=?", (eventId,))
+                cursor.execute(f"select count(*) from {date}")
+                data = cursor.fetchone()[0]
+                if data == 0:
+                    cursor.execute(f"drop table {date}")
 
             return True
         except Exception as e:
-            print(e)
+            logging.error(f"DB - delete event error: {e}")
             return False
         finally:
             con.commit()
-            cursor.close()
+            con.close()
+
+    def insert_month(self, date):
+        con = sqlite3.connect('./src/schedule.db')
+        cursor = con.cursor()
+        date = 'm' + date.split("T")[0].replace('-', '')
+
+        try:
+            cursor.execute(f"create table if not exists {date} (checker integer primary key)")
+            return True
+        except Exception as e:
+            logging.error(f"DB - insert month error: {e}")
+            return False
+        finally:
+            con.commit()
+            con.close()
+
+    def check_month(self, date):
+        con = sqlite3.connect('./src/schedule.db')
+        cursor = con.cursor()
+        date = 'm' + date.split("T")[0].replace('-', '')
+
+        try:
+            cursor.execute(f"select * from {date}")
+            return True
+        except Exception as e:
+            logging.error(f"DB - check month error: {e}")
+            return False
+        finally:
             con.close()
 
     def get_google_credentials(self):
@@ -119,6 +145,8 @@ class google_api():
         return creds
 
     def get_calendar_events(self, start_date, end_date, get_range):
+        logging.info(f"API  - Fetching events from {start_date} to {end_date}")
+
         if not self.service:
             # Google Calendar 인증 및 서비스 설정
             self.creds = self.get_google_credentials()
@@ -135,7 +163,7 @@ class google_api():
             order_by = 'startTime'
         else:
             calendar_ids = ['primary']
-            order_by = 'update'
+            order_by = 'updated'
 
         for attempt in range(max_retries):
             try:
@@ -154,11 +182,11 @@ class google_api():
                 for event in events:
                     start = event.get('start', {}).get('dateTime') if event.get('start', {}).get('dateTime') else event.get('start', {}).get('date')
                     end = event.get('end', {}).get('dateTime') if event.get('end', {}).get('dateTime') else (datetime.fromisoformat(event.get('end', {}).get('date')) - timedelta(days=1)).isoformat()
-                    location = event.get('location', {}) if event.get('location', {}) else ''
-                    description = event.get('description', '-') if event.get('description', '-') else ''
+                    location = event.get('location', {}) if event.get('location', {}) else '-'
+                    description = event.get('description', '') if event.get('description', '') else '-'
 
                     if start and end:
-                        if event.get('description', '-') != "-": #공휴일, 기념일
+                        if description != "-": #공휴일, 기념일
 
                             self.create_table(start)
                             self.insert_event('holiday', start, event.get('summary'), start, end, description, '-')
@@ -190,6 +218,8 @@ class google_api():
                     time.sleep(2 ** attempt)  # 지수 백오프
 
     def get_calendar_events_from_db(self, first, end):
+        logging.info(f"DB   - Fetching events from {first} to {end}")
+
         event_dict = {}
         holiday_dict = {}
 
@@ -203,6 +233,18 @@ class google_api():
         try:
             for date in self.date_range(str(first), str(end)):
                 table = 'd' + date.isoformat().replace('-', '')
+                if date.isoformat().split('-')[2] == '01' and not self.check_month(date.isoformat()):
+                    self.insert_month(date.isoformat())
+                    self.get_calendar_events(
+                        datetime.combine(first, datetime.min.time()),
+                        datetime.combine(end, datetime.max.time()),
+                        'all'
+                    )
+
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                    tables = cursor.fetchall()
+                    tables = [item[0] for item in tables]
+
                 if table in tables:
                     data = cursor.execute(f'select * from {table}')
                     data = data.fetchall()
@@ -242,54 +284,17 @@ class google_api():
             logging.error(f"Error fetching events: {e}")
             return {}, {}
 
-    def get_events(self):
-        if not self.service:
-            # Google Calendar 인증 및 서비스 설정
-            self.creds = self.get_google_credentials()
-            
-            # Google Calendar 서비스 생성
-            if self.creds:
-                self.service = build('calendar', 'v3', credentials=self.creds)
-            else:
-                self.service = None
+    def sync_300days(self):
+        logging.info("Syncing 300 days of events")
 
-        try:
-            now = datetime.now()
-            start_date = now - timedelta(hours=24)
-            end_date = now + timedelta(hours=24)
+        first = datetime.now().date() - timedelta(days=100)
+        end = first + timedelta(days=400)
 
-            events_result = self.service.events().list(
-                calendarId='primary',
-                timeMin=start_date.isoformat() + 'Z',
-                timeMax=end_date.isoformat() + 'Z',
-                singleEvents=True,
-                orderBy='startTime',
-                fields='items(summary,start/dateTime,end/dateTime)'
-            ).execute()
-            events = events_result.get('items', [])
-
-            noti_dict = {}
-            for event in events:
-                start = event.get('start', {}).get('dateTime')
-                end = event.get('end', {}).get('dateTime')
-
-                if start and end:
-                    event_date = start_date.date().isoformat()
-
-                    if event_date not in noti_dict:
-                        noti_dict[event_date] = []
-
-                    noti_dict[event_date].append({
-                        "summary": event.get('summary'), 
-                        "start": datetime.fromisoformat(start).time().isoformat(), 
-                        "end": datetime.fromisoformat(end).time().isoformat()
-                    })
-
-            return noti_dict
-
-        except Exception as e:
-            logging.error(f"Error fetching events: {e}")
-            return []
+        self.get_calendar_events(
+            datetime.combine(first, datetime.min.time()),
+            datetime.combine(end, datetime.max.time()),
+            'all'
+        )
 
     def date_range(self, start, end):
         date_list = []
@@ -332,27 +337,3 @@ class google_api():
 
 if __name__ == '__main__':
     api = google_api()
-
-    now = datetime.now()
-    start = now - timedelta(days=30)
-    end = now + timedelta(days=1)
-
-    # 해당 월의 첫날 생성
-    first_day = date(start.year, start.month, 1)
-    
-    # 해당 월의 마지막 날 계산
-    _, last_day_of_month = calendar.monthrange(end.year, end.month)
-    last_day = date(end.year, end.month, last_day_of_month)
-
-    # api.get_calendar_events(
-    #     datetime.combine(first_day, datetime.min.time()),
-    #     datetime.combine(last_day, datetime.max.time()),
-    #     'all'
-    # )
-
-    event, holiday = api.get_calendar_events_from_db(
-        first_day,
-        last_day
-    )
-
-    print(event)

@@ -194,8 +194,6 @@ class Widget(QWidget):
         self.toggle = False
         self.x = 100
         self.y = 100
-        self.width = 900
-        self.height = 900
         self.theme = 'light'
         self.version = '0.0.0'
 
@@ -209,6 +207,24 @@ class Widget(QWidget):
         self.year = now.year
         self.month = now.month
         self.cal = calendar.Calendar(calendar.MONDAY)
+
+        # 이번달의 첫번째 날 생성
+        first_day = date(now.year, now.month, 1)
+
+        # 해당 월의 마지막 날 계산
+        _, last_day_of_month = calendar.monthrange(self.year, self.month)
+        last_day = date(now.year, now.month, last_day_of_month)
+
+        if not api.check_month(first_day.isoformat()): #이번달에 대한 db가 작성되지 않았다면 300일 동기화 진행
+            api.sync_300days()
+        else: #이미 이번달에 대한 정보가 있다면 update진행
+            api.get_calendar_events(
+                datetime.combine(first_day - timedelta(days=100), datetime.min.time()),
+                datetime.combine(last_day + timedelta(days=200), datetime.max.time()),
+                'update'
+            )
+
+        self.noti_events = []
 
         # .ttf 파일 로드
         font_path = "./src/NanumSquareNeo-bRg.ttf"  # ttf 파일 경로
@@ -233,13 +249,11 @@ class Widget(QWidget):
                     config = json.load(f)
                     self.x = config.get('x', self.x)
                     self.y = config.get('y', self.y)
-                    self.width = config.get('width', self.width)
-                    self.height = config.get('height', self.height)
                     self.theme = config.get('theme', self.theme)
             except json.JSONDecodeError:
-                logging.error('Error decoding config.json')
+                logging.error('MAIN - Error decoding config.json')
         else:
-            logging.info('config.json not found. Using default values.')
+            logging.info('MAIN  - config.json not found. Using default values.')
 
         # version.json 처리
         if os.path.exists(version_path):
@@ -248,9 +262,9 @@ class Widget(QWidget):
                     version = json.load(f)
                     self.version = version.get('version', '0.0.0')
             except json.JSONDecodeError:
-                logging.error('Error decoding version.json')
+                logging.error('MAIN - Error decoding version.json')
         else:
-            logging.info('version.json not found. Creating default file.')
+            logging.info('MAIN  - version.json not found. Creating default file.')
 
             os.makedirs(os.path.dirname(version_path), exist_ok=True)
             with open(version_path, 'w') as f:
@@ -264,8 +278,6 @@ class Widget(QWidget):
         config = {
             'x': self.x,
             'y': self.y,
-            'width': self.width,
-            'height': self.height,
             'theme': self.theme_manager.current_theme.value
         }
         with open(self.config_file, 'w') as f:
@@ -283,7 +295,7 @@ class Widget(QWidget):
     def initUI(self):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setGeometry(self.x, self.y, self.width, self.height)
+        self.setGeometry(self.x, self.y, 900, 900)
 
         self.showFrame()
 
@@ -414,17 +426,17 @@ class Widget(QWidget):
             self.set_theme(Theme.DARK)
 
     def set_calendar(self):
-        logging.debug('set_calendar called')
+        logging.info('MAIN - set_calendar called')
 
         # 해당 월의 첫날 생성
-        first_day = date(self.year, self.month, 1)
+        self.first_day = date(self.year, self.month, 1)
         
         # 해당 월의 마지막 날 계산
         _, last_day_of_month = calendar.monthrange(self.year, self.month)
-        last_day = date(self.year, self.month, last_day_of_month)
+        self.last_day = date(self.year, self.month, last_day_of_month)
         
         # 첫날의 요일 (0:월요일 ~ 6:일요일)
-        weekday = -1 if first_day.weekday() == 6 else first_day.weekday()
+        weekday = -1 if self.first_day.weekday() == 6 else self.first_day.weekday()
 
         # try:
         #     url = 'http://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo'
@@ -460,8 +472,8 @@ class Widget(QWidget):
 
         # 날짜 범위를 사용하여 이벤트 가져오기
         self.event_dict, holiday_dict = api.get_calendar_events_from_db(
-            first_day,
-            last_day,
+            self.first_day,
+            self.last_day,
         )
 
         # 달력에 날짜 표시
@@ -476,6 +488,9 @@ class Widget(QWidget):
                 today = date.today().isoformat()
                 day.label.setText(str(idx - weekday))
                 day.holidayLabel.setText('')
+
+                if today == current_date:
+                    self.noti_events = self.event_dict.get(current_date, [])
 
                 if idx % 7 == 0:
                     if today == current_date:
@@ -603,7 +618,7 @@ class Widget(QWidget):
 
             deleteBtn = QPushButton('삭제', self.detailFrame)
             deleteBtn.setFont(self.small)
-            deleteBtn.clicked.connect(partial(self.delete_event, events[idx]['id'], label))
+            deleteBtn.clicked.connect(partial(self.delete_event, events[idx]['id'], current_date, label))
             deleteBtn.setCursor(Qt.PointingHandCursor)
             deleteBtn.setFixedSize(50, 30)  # 버튼 너비 고정
 
@@ -812,27 +827,27 @@ class Widget(QWidget):
         try:
             api.service.events().insert(calendarId='primary', body=event).execute()
             api.get_calendar_events(
-                datetime.combine(start.toString(Qt.ISODate), datetime.min.time()),
-                datetime.combine(end.toString(Qt.ISODate), datetime.max.time()),
+                datetime.combine(self.first_day, datetime.min.time()),
+                datetime.combine(self.last_day, datetime.max.time()),
                 'update'
             )
             self.set_calendar()
             self.show_detail(None, label)
         except Exception as e:
-            logging.error(f"Error adding event: {e}")
+            logging.error(f"MAIN    - Error adding event: {e}")
 
-    def delete_event(self, event_id, label):
+    def delete_event(self, event_id, date, label):
 
         if not api.service:
             return
 
         try:
+            api.delete_event(event_id, date)
             api.service.events().delete(calendarId='primary', eventId=event_id).execute()
-            api.delete_event(event_id)
             self.set_calendar()
             self.show_detail(None, label)
         except Exception as e:
-            logging.error(f"Error deleting event: {e}")
+            logging.error(f"Main    - Error deleting event: {e}")
 
     def prev_month(self, e):
         self.month -= 1
@@ -886,8 +901,6 @@ class Widget(QWidget):
             config = {
                 'x': x,
                 'y': y,
-                'width': self.width,
-                'height': self.height,
                 'theme': self.theme_manager.current_theme.value
             }
 
@@ -898,15 +911,11 @@ class Widget(QWidget):
         # 현재 창 위치와 크기 저장
         x = self.pos().x()
         y = self.pos().y()
-        width = self.width
-        height = self.height
         
         # JSON 파일로 저장
         config = {
             'x': x,
             'y': y,
-            'width': width,
-            'height': height,
             'theme': self.theme_manager.current_theme.value
         }
 
@@ -918,9 +927,6 @@ class Tray:
     def __init__(self):
         self.toaster = ToastNotifier()
 
-        self.event_dict = api.get_events()
-        self.noti_dict = {}
-
         # 아이콘 설정
         self.icon = Icon(
             "NugsCalendarNotifier",
@@ -928,17 +934,24 @@ class Tray:
             menu=self.make_menu()
         )
 
-        self.set_notification()
-
     def make_menu(self):
         return Menu(
             MenuItem("Check Event List", self.show_event_list),
             MenuItem("Reload Events", self.on_reload_event),
+            MenuItem("Reload This Month", self.reload_this_month),
             Menu.SEPARATOR,  # 구분선 추가
             MenuItem("Theme Toggle", window.toggle_theme),
             Menu.SEPARATOR,  # 구분선 추가
             MenuItem("Exit", self.on_exit)
         )
+
+    def reload_this_month(self):
+        api.get_calendar_events(
+            datetime.combine(date(window.year, window.month, 1), datetime.min.time()),
+            datetime.combine(date(window.year, window.month, calendar.monthrange(window.year, window.month)[1]), datetime.max.time()),
+            'all'
+        )
+        window.set_calendar()
 
     def send_notification(self, content):
 
@@ -962,43 +975,17 @@ class Tray:
     def check_and_notify(self):
         try:
             now = datetime.now()
-            logging.debug('check notification called')
-            keys_to_delete = []
-            if self.noti_dict != None:
-                for event_time_str, summary in self.noti_dict.items():
-                    event_time = datetime.strptime(event_time_str, "%H:%M:%S").time()
+            logging.info('MAIN - check notification called')
+            if window.noti_events != None:
+                for event in window.noti_events:
+                    event_time = datetime.strptime(event['start'], "%H:%M:%S").time()
                     event_datetime = datetime.combine(now.date(), event_time)
                     
-                    if event_datetime - timedelta(minutes=10) <= now and now <= event_datetime:
-                        self.send_notification(summary)
-                        keys_to_delete.append(event_time_str)
+                    if event_datetime - timedelta(minutes=10) <= now and now <= event_datetime - timedelta(minutes=9):
+                        self.send_notification(event['summary'])
 
-            for key in keys_to_delete:
-                del self.noti_dict[key]
         except Exception as e:
-            logging.error(f'Error in checking noti events: {e}')
-
-    def set_notification(self):
-        logging.debug('set notification called')
-
-        try:
-            for event in self.event_dict.values():
-                for e in event:
-                    start = e.get('start', {})
-                    end = e.get('end', {})
-                    if start and end:
-                        start_time = start
-                        if start_time not in self.noti_dict:
-                            self.noti_dict[start_time] = []
-
-                        self.noti_dict[start_time].append(e.get('summary', 'No Title'))
-        except Exception as e:
-            logging.error(f'Error in set noti events: {e}')
-    
-    def reload_noti(self):
-        self.event_dict = api.get_events()
-        self.noti_dict = {}
-        self.set_notification()
+            logging.error(f'MAIN    - Error in checking noti events: {e}')
 
     def on_exit(self, icon):
         icon.stop()
@@ -1009,27 +996,57 @@ class Tray:
         None
 
     def on_reload_event(self):
-        logging.debug('reload called')
+        logging.info('MAIN - reload called')
 
         try:
+            now = datetime.now()
+            start = now - timedelta(days=100)
+            end = now + timedelta(days=200)
+
+            # 해당 월의 첫날 생성
+            first_day = date(start.year, start.month, 1)
+            
+            # 해당 월의 마지막 날 계산
+            _, last_day_of_month = calendar.monthrange(end.year, end.month)
+            last_day = date(end.year, end.month, last_day_of_month)
+            api.get_calendar_events(
+                datetime.combine(first_day, datetime.min.time()),
+                datetime.combine(last_day, datetime.max.time()),
+                'update'
+            )
+
             window.set_calendar()
-            self.reload_noti()
             self.send_notification('Reload Complete')
         except Exception as e:
-            logging.error(f"Error in reload: {e}")
+            logging.error(f"MAIN    - Error in reload: {e}")
 
     def reload_by_sync(self):
-        logging.debug('reload by sync called')
+        logging.info('MAIN - reload by sync called')
         try:
+            now = datetime.now()
+            start = now - timedelta(days=100)
+            end = now + timedelta(days=200)
+
+            # 해당 월의 첫날 생성
+            first_day = date(start.year, start.month, 1)
+            
+            # 해당 월의 마지막 날 계산
+            _, last_day_of_month = calendar.monthrange(end.year, end.month)
+            last_day = date(end.year, end.month, last_day_of_month)
+            api.get_calendar_events(
+                datetime.combine(first_day, datetime.min.time()),
+                datetime.combine(last_day, datetime.max.time()),
+                'update'
+            )
+
             window.set_calendar()
-            self.reload_noti()
         except Exception as e:
-            logging.error(f"Error in reload by sync: {e}")
+            logging.error(f"MAIN    - Error in reload by sync: {e}")
 
     def show_event_list(self):
         result = []
-        for time, content in self.event_dict.items():
-            result.append(f"{time} - {content}")
+        for content in window.noti_events:
+            result.append(f"{content['start']} ~ {content['end']} : {content['summary']}")
 
         content = " / ".join(result) if len(result) else 'No Event in 24hours...'
 
