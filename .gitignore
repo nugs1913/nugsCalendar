@@ -32,3 +32,4 @@ pip-delete-this-directory.txt
 *.log
 
 client_secret.json
+token.json
